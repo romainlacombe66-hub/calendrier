@@ -1,0 +1,27 @@
+rules_version = '2';
+// Règles de sécurité : à copier dans Firebase > Firestore Database > Règles (étape 4 du guide).
+// Remplacez les deux adresses ci-dessous par celles de Romain et de Manon (en minuscules).
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function membre() {
+      return request.auth != null
+        && request.auth.token.email in ['romainlacombe66@gmail.com', 'leclerc.manone@gmail.com'];
+    }
+
+    // Données du calendrier, réglages de chaque profil, historique des changements
+    match /events/{id}     { allow read, write: if membre(); }
+    match /tasks/{id}      { allow read, write: if membre(); }
+    match /projects/{id}   { allow read, write: if membre(); }
+    match /categories/{id} { allow read, write: if membre(); }
+    match /settings/{id}   { allow read, write: if membre(); }
+    match /log/{id}        { allow read, write: if membre(); }
+
+    // Téléphones inscrits aux notifications (un document par téléphone)
+    match /devices/{id}    { allow read, write: if membre(); }
+
+    // Réservés au programme d'envoi des rappels et à la future synchro (version 2)
+    match /meta/{id}   { allow read: if membre(); allow write: if false; }
+    match /notifs/{id} { allow read, write: if false; }
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "name": "calendrier-manon-romain",
+  "private": true,
+  "type": "module",
+  "description": "Calendrier commun de Manon et Romain : appli web installable + envoi des rappels.",
+  "scripts": {
+    "rappels": "node scripts/send-reminders.mjs",
+    "test": "TZ=Europe/Paris node scripts/test-reminders.mjs"
+  },
+  "dependencies": {
+    "firebase-admin": "^12.7.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
