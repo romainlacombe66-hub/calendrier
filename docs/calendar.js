@@ -16,7 +16,15 @@ const hexOf = c => /^#[0-9a-f]{6}$/i.test(c || "") ? c.toLowerCase() : (LEGACY[c
 const WHO = {tous:"Les deux", manon:"Manon", romain:"Romain"};
 const SOURCES = {manuel:"Saisi dans l'appli", bullet:"Bullet reMarkable", crohn:"Journal Crohn reMarkable"};
 const KINDS = {travaux:"Travaux", vacances:"Vacances", autre:"Autre"};
-const REPEAT = {none:"Une seule fois", weekly:"Chaque semaine", monthly:"Chaque mois", yearly:"Chaque année"};
+const REPEAT = {none:"Une seule fois", daily:"Tous les jours", weekly:"Toutes les semaines", monthly:"Tous les mois", yearly:"Tous les ans"};
+// Périodicité : tous les N jours / semaines / mois / ans (every, 1 par défaut)
+const EVERY_UNIT = {daily:["jour","jours"], weekly:["semaine","semaines"], monthly:["mois","mois"], yearly:["an","ans"]};
+const everyOf = x => Math.max(1, Math.min(99, Math.round(Number(x.every) || 1)));
+const everyText = (r, n) => n <= 1 ? ({daily:"Chaque jour", weekly:"Chaque semaine", monthly:"Chaque mois", yearly:"Chaque année"})[r] : `${r === "weekly" ? "Toutes les" : "Tous les"} ${n} ${EVERY_UNIT[r][1]}`;
+const dayNum = d => Math.round(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()) / 864e5);
+const monthNum = d => d.getFullYear() * 12 + d.getMonth();
+// Numéro de semaine (lundi = début) depuis une date de référence
+const weekNum = d => Math.floor((dayNum(d) - ((d.getDay() + 6) % 7)) / 7);
 const MONTHS = ["janv.","févr.","mars","avr.","mai","juin","juil.","août","sept.","oct.","nov.","déc."];
 const OTHER = {romain:"manon", manon:"romain"};
 const BELL = `<svg class="bell" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>`;
@@ -233,9 +241,11 @@ function occursBase(e, d){
   const r = repeatOf(e);
   if (r === "none") return ymd(d) === e.date;
   if (e.months?.length && !e.months.includes(d.getMonth()+1)) return false;
-  if (r === "weekly") return d.getDay() === s.getDay();
-  if (r === "monthly") return d.getDate() === s.getDate();
-  if (r === "yearly") return d.getDate() === s.getDate() && d.getMonth() === s.getMonth();
+  const n = everyOf(e);
+  if (r === "daily") return (dayNum(d) - dayNum(s)) % n === 0;
+  if (r === "weekly") return d.getDay() === s.getDay() && ((dayNum(d) - dayNum(s)) / 7) % n === 0;
+  if (r === "monthly") return d.getDate() === s.getDate() && (monthNum(d) - monthNum(s)) % n === 0;
+  if (r === "yearly") return d.getDate() === s.getDate() && d.getMonth() === s.getMonth() && (d.getFullYear() - s.getFullYear()) % n === 0;
   return false;
 }
 // Durée d'une période en jours (0 = un seul jour)
@@ -273,7 +283,7 @@ function nextOccurrence(e, now){
 }
 function repeatText(e){
   const r = repeatOf(e); if (r === "none") return "";
-  return REPEAT[r] + (e.months?.length ? " (" + monthsLabel(e.months) + ")" : "");
+  return everyText(r, everyOf(e)) + (e.months?.length ? " (" + monthsLabel(e.months) + ")" : "");
 }
 
 /* ---------- stockage ---------- */
@@ -688,6 +698,7 @@ const DAYS_LONG = ["lundi","mardi","mercredi","jeudi","vendredi","samedi","diman
 const DAYS_SHORT = ["L","M","M","J","V","S","D"];
 function taskOnDay(t, d){
   const s = taskSched(t), k = ymd(d);
+  if (s === "weekdays" && everyOf(t) > 1 && !movedTo(t, k) && ((weekNum(d) - weekNum(parse(t.from || k))) % everyOf(t) + everyOf(t)) % everyOf(t) !== 0) return false;
   if (s === "weekdays" && movedTo(t, k)) return true;
   if (s === "weekdays") return (t.days || []).includes(isoDow(d)) && (!t.from || k >= t.from) && (!t.until || k <= t.until) && !skipOf(t, k);
   if (s === "dates") return !!t.date && k >= t.date && k <= (t.endDate && t.endDate > t.date ? t.endDate : t.date);
@@ -704,7 +715,7 @@ function taskIn(t, ymStr){
   const r = taskRecur(t), m = Number(ymStr.slice(5));
   if (r === "once") return t.month === ymStr;
   if (t.startMonth && ymStr < t.startMonth) return false;
-  if (r === "monthly") return true;
+  if (r === "monthly") { const n = everyOf(t), ref = t.startMonth || t.month; return n <= 1 || !ref || (monthNum(parse(ymStr + "-01")) - monthNum(parse(ref + "-01"))) % n === 0; }
   if (r === "months") return (t.months || []).includes(m);
   return false;
 }
@@ -718,12 +729,12 @@ function taskRecurText(t){
   const s = taskSched(t);
   if (s === "weekdays") {
     const ds = (t.days || []).slice().sort().map(n => DAYS_LONG[n - 1]);
-    const base = ds.length ? "Chaque " + (ds.length > 1 ? ds.slice(0, -1).join(", ") + " et " + ds[ds.length - 1] : ds[0]) : "Jours à choisir";
+    const base = (everyOf(t) > 1 ? `Toutes les ${everyOf(t)} semaines : ` : "") + (ds.length ? (everyOf(t) > 1 ? "" : "Chaque ") + (ds.length > 1 ? ds.slice(0, -1).join(", ") + " et " + ds[ds.length - 1] : ds[0]) : "Jours à choisir");
     return [base, t.from && t.from > ymd(today) ? "à partir du " + fmtShort(t.from) : "", t.until ? "jusqu'au " + fmtShort(t.until) : "", t.remindOn ? "rappel " + leadText(Number(t.remindDays) || 0) + " à " + (t.remindTime || "09:00") : ""].filter(Boolean).join(" · ");
   }
   if (s === "dates") return [t.endDate && t.endDate > t.date ? `du ${fmtShort(t.date)} au ${fmtShort(t.endDate)}` : t.date ? "le " + fmtShort(t.date) : "", t.remindOn ? "rappel " + leadText(Number(t.remindDays) || 0) + " à " + (t.remindTime || "09:00") : ""].filter(Boolean).join(" · ");
   const r = taskRecur(t);
-  const base = r === "monthly" ? "Tous les mois" : r === "months" ? "Chaque année en " + monthsLabel(t.months) : "";
+  const base = r === "monthly" ? everyText("monthly", everyOf(t)) : r === "months" ? "Chaque année en " + monthsLabel(t.months) : "";
   return [base, t.remindDay > 0 ? "rappel le " + t.remindDay + " à " + (t.remindTime || "09:00") : ""].filter(Boolean).join(" · ");
 }
 function taskRow(t, m, d, prefix){
@@ -1072,8 +1083,9 @@ function renderSettings(){
     <p class="note">Choix enregistré sur ce téléphone. « Mon planning » montre vos catégories et celles qui concernent les deux.</p>
     ${me ? `<div class="field"><label for="startMode">Planning affiché à l'ouverture</label><select id="startMode">${[["moi","Mon planning"],["autre","Planning de " + WHO[OTHER[me]]],["tout","Tout"]].map(([v, l]) => `<option value="${v}" ${(state.settings[me]?.startMode || "moi") === v ? "selected" : ""}>${l}</option>`).join("")}</select></div>
       <div class="field"><label for="notifMode">Mes rappels</label><select id="notifMode">${[["both","Sur mon téléphone et dans l'appli"],["app","Seulement dans l'appli"],["phone","Seulement sur mon téléphone"],["off","Désactivés (aucun rappel affiché ni envoyé)"]].map(([v, l]) => `<option value="${v}" ${notifModeOf(me) === v ? "selected" : ""}>${l}</option>`).join("")}</select></div>
-      <p class="note">Sur le téléphone : une notification pour chaque rappel, vérifiée toutes les 15 minutes entre 7 h et 22 h (un rappel de la nuit arrive à 7 h). Dans l'appli : la ligne Rappels en haut du calendrier.</p>
-      <p class="note" id="pushState">${window.APP_HOOKS?.pushState?.() || ""}</p>` : ""}
+      <p class="note">Sur le téléphone : une notification pour chaque rappel, vérifiée toutes les 15 minutes. Dans l'appli : la ligne Rappels en haut du calendrier.</p>
+      <p class="note" id="pushState">${window.APP_HOOKS?.pushState?.() || ""}</p>
+      ${quietField(me)}` : ""}
     ${me ? `<div class="field"><span class="lbl">Thème de l'appli</span><div class="themes" role="group" aria-label="Thème">${Object.entries(THEMES).map(([k, t]) => `<button type="button" data-themepick="${k}" aria-pressed="${applyTheme() === k}"><span class="sw" style="background:${t.bg || "linear-gradient(135deg,#eef1f4 50%,#131820 50%)"}"><i style="background:${t.ac || "#8fb2e0"}"></i></span><span style="min-width:0">${t.label}<span class="t2">${t.hint}</span></span></button>`).join("")}</div>
       <span class="note">Propre à votre profil : chacun peut avoir le sien.</span></div>` : ""}
     ${window.APP_HOOKS?.account?.() || ""}`;
@@ -1186,6 +1198,26 @@ function setMe(k){
   state.me = k; state.mode = state.settings[k]?.startMode || "moi"; store.set("cc-me", k); store.set("cc-mode", state.mode); store.set("cc-start", state.settings[k]?.startMode || ""); render(); renderSettings();
   window.APP_HOOKS?.profile?.(k);
 }
+// Créneau sans notification (par profil) : par défaut de 22:00 à 07:00
+const quietOf = me => ({on: true, start: "22:00", end: "07:00", ...(state.settings[me]?.quiet || {})});
+function quietField(me){
+  const q = quietOf(me), m = notifModeOf(me);
+  return `<div class="field" id="quietBox" ${m === "both" || m === "phone" ? "" : "hidden"}>
+    <label class="switch" for="quietOn"><input type="checkbox" id="quietOn" ${q.on ? "checked" : ""}>Pas de notification pendant un créneau</label>
+    <div class="row" id="quietTimes" style="flex-wrap:nowrap" ${q.on ? "" : "hidden"}>
+      <div class="field" style="flex:1;min-width:0"><label for="quietStart">De</label><input type="time" id="quietStart" value="${esc(q.start)}"></div>
+      <div class="field" style="flex:1;min-width:0"><label for="quietEnd">À</label><input type="time" id="quietEnd" value="${esc(q.end)}"></div>
+    </div>
+    <span class="note">${q.on ? `Rien n'arrive sur le téléphone de ${esc(q.start)} à ${esc(q.end)} ; les rappels de ce créneau arrivent à ${esc(q.end)}.` : "Les notifications peuvent arriver à toute heure."}</span></div>`;
+}
+function saveQuiet(){
+  if (!state.me) return;
+  const on = $("#quietOn").checked, start = $("#quietStart").value || "22:00", end = $("#quietEnd").value || "07:00";
+  if (on && start === end) { toast("Le début et la fin du créneau doivent être différents."); return; }
+  const next = {...(state.settings[state.me] || {}), quiet: {on, start, end}};
+  guard(rawSave("settings", state.me, next)); state.settings[state.me] = next; renderSettings();
+  toast(on ? `Pas de notification de ${start} à ${end}` : "Notifications à toute heure");
+}
 // Mes rappels : téléphone + appli / appli / téléphone / désactivés
 function notifModeOf(me){
   const st = state.settings[me] || {}, notify = !!st.notify, shown = !(st.hide || []).includes("rems");
@@ -1213,6 +1245,17 @@ function welcomeSheet(){
 }
 
 const repeatSelect = (cur) => `<select id="fRep">${Object.entries(REPEAT).map(([k,l]) => `<option value="${k}" ${k===cur?"selected":""}>${l}</option>`).join("")}</select>`;
+// « Tous les [N] semaines » : la périodicité d'une répétition
+const everyField = (id, n, unit, hidden) => `<div class="field" id="${id}Box" ${hidden ? "hidden" : ""}><label for="${id}">Périodicité</label>
+  <div class="row" style="flex-wrap:nowrap;align-items:center;gap:10px"><span style="flex:none" id="${id}Pre">Tous les</span><input type="number" id="${id}" min="1" max="99" step="1" value="${n}" style="width:80px;flex:none" aria-label="Combien"><span id="${id}Unit" style="min-width:0">${unit}</span></div></div>`;
+const readEvery = (sh, id) => { const n = Math.round(Number(sh.querySelector("#" + id)?.value)); return n >= 1 && n <= 99 ? n : null; };
+function wireEvery(sh, id, unitOf){
+  const inp = sh.querySelector("#" + id);
+  const upd = () => { const n = Number(inp.value) || 1, [one, many, fem] = unitOf();
+    sh.querySelector("#" + id + "Unit").textContent = n > 1 ? many : one;
+    sh.querySelector("#" + id + "Pre").textContent = n > 1 ? (fem ? "Toutes les" : "Tous les") : (fem ? "Chaque" : "Chaque"); };
+  inp.addEventListener("input", upd); upd(); return upd;
+}
 
 function eventSheet(ev, occ){
   const isNew = !ev, imported = ev && ev.source && ev.source !== "manuel";
@@ -1232,6 +1275,7 @@ function eventSheet(ev, occ){
       <div class="field"><span class="lbl">Personne / catégorie</span>${pick("cat", catOptionsNoBd(), cat0)}</div>
       ${sharedField(typeof ev !== "undefined" ? ev?.shared : t?.shared)}
       ${imported ? "" : `<div class="field"><label for="fRep">Récurrence</label>${repeatSelect(rep0)}</div>
+      ${everyField("evEvery", ev ? everyOf(ev) : 1, "", rep0 === "none")}
       <div class="field" id="evMonthsBox" ${rep0 === "none" ? "hidden" : ""}><span class="lbl">Mois concernés <span style="font-weight:400">(aucun coché = tous les mois)</span></span>${pick("months", monthOptions(), ev?.months || [], true, "months")}</div>`}
       ${reminderField(ev, "Délai avant : par exemple 2 semaines, 3 jours ou 5 heures. Sans heure précise, l'événement compte à 9 h.", ev?.date || state.sel)}
       ${occBlock(ev, "events", occ)}
@@ -1243,8 +1287,9 @@ function eventSheet(ev, occ){
     </form>`, sh => {
     wireIcon(sh); if (ev) wireOcc(sh, ev, "events");
     const rep = sh.querySelector("#fRep"), box = sh.querySelector("#evMonthsBox");
+    const updEvery = rep ? wireEvery(sh, "evEvery", () => { const u = EVERY_UNIT[rep.value] || ["semaine","semaines"]; return [u[0], u[1], rep.value === "weekly"]; }) : null;
     rep?.addEventListener("change", () => {
-      box.hidden = rep.value === "none";
+      box.hidden = rep.value === "none"; sh.querySelector("#evEveryBox").hidden = rep.value === "none"; updEvery();
       sh.querySelector('label[for="evDate"]').textContent = rep.value === "none" ? "Date (ou début)" : "Première date";
     });
     onPick.cat = (v, root) => { if (isNew && v === "anniv" && rep && rep.value === "none" && root === sh) { rep.value = "yearly"; rep.dispatchEvent(new Event("change")); } };
@@ -1259,8 +1304,9 @@ function eventSheet(ev, occ){
       const data = {
         acr: readAcr(sh), shared: readShared(sh), ...readIcon(sh), endDate: sh.querySelector("#evEnd").value || "", title: sh.querySelector("#evTitle").value.trim(), date: sh.querySelector("#evDate").value,
         time: sh.querySelector("#evTime").value, cat, source: ev?.source || "manuel", ...rem,
-        repeat: rep.value, months: rep.value === "none" ? [] : getPicks(sh, "months").map(Number)
+        repeat: rep.value, months: rep.value === "none" ? [] : getPicks(sh, "months").map(Number), every: 1
       };
+      if (rep.value !== "none") { const n = readEvery(sh, "evEvery"); if (n === null) { toast("La périodicité doit être un nombre entre 1 et 99."); return; } data.every = n; }
       if (!data.title || !data.date) { toast("Indiquez au moins un titre et une date."); return; }
       if (data.endDate && data.endDate < data.date) { toast("La date de fin doit être après la date de début."); return; }
       if (data.endDate === data.date) data.endDate = "";
@@ -1337,7 +1383,9 @@ function taskSheet(t, occ, day){
         <div class="row" style="flex-wrap:nowrap;margin-top:6px">
           <div class="field" style="flex:1;min-width:0"><label for="tkFrom">À partir du</label><input type="date" id="tkFrom" value="${esc(t?.from || day || ymd(today))}"></div>
           <div class="field" style="flex:1;min-width:0"><label for="tkUntil">Jusqu'au <span style="font-weight:400">(facultatif)</span></label><input type="date" id="tkUntil" value="${esc(t?.until || "")}"></div>
-        </div></div>
+        </div>
+        <div style="margin-top:6px">${everyField("tkEveryW", sch0 === "weekdays" && t ? everyOf(t) : 1, "semaine", false)}</div>
+        <p class="note">Pour « toutes les 2 semaines » ou plus, la semaine de « À partir du » est la première.</p></div>
       <div class="field" id="tkDateBox" ${sch0 !== "dates" ? "hidden" : ""}>
         <div class="row" style="flex-wrap:nowrap">
           <div class="field" style="flex:1;min-width:0"><label for="tkDate">Le</label><input type="date" id="tkDate" value="${esc(t?.date || day || ymd(today))}"></div>
@@ -1346,6 +1394,7 @@ function taskSheet(t, occ, day){
       <div id="tkMonthGroup" class="stack" ${sch0 !== "month" ? "hidden" : ""}>
       <div class="field"><label for="tkWhen">Quels mois ?</label>
         <select id="tkWhen">${[["once","Un seul mois"],["monthly","Tous les mois"],["months","Certains mois, chaque année"]].map(([k,l]) => `<option value="${k}" ${k===rec0?"selected":""}>${l}</option>`).join("")}</select></div>
+      ${everyField("tkEveryM", sch0 === "month" && t ? everyOf(t) : 1, "mois", rec0 !== "monthly")}
       <div class="field" id="tkMonthBox" ${rec0 !== "once" ? "hidden" : ""}><label for="tkMonth">Mois</label><input type="month" id="tkMonth" value="${esc(t?.month || ym(state.taskMonth))}"></div>
       <div class="field" id="tkMonthsBox" ${rec0 !== "months" ? "hidden" : ""}><span class="lbl">Mois concernés</span>${pick("months", monthOptions(), t?.months?.length ? t.months : [state.taskMonth.getMonth()+1], true, "months")}</div>
       </div>
@@ -1382,7 +1431,10 @@ function taskSheet(t, occ, day){
     { const td = sh.querySelector("#tkDate"), rd = sh.querySelector("#tkRemDate"); let lead = Number(t?.remindDays) || 0;
       rd.addEventListener("change", () => { if (td.value && rd.value) lead = daysBetween(rd.value, td.value); });
       td.addEventListener("change", () => { if (td.value) rd.value = ymd(addDays(parse(td.value), -lead)); }); }
+    wireEvery(sh, "tkEveryW", () => ["semaine", "semaines", true]);
+    wireEvery(sh, "tkEveryM", () => ["mois", "mois", false]);
     when.addEventListener("change", () => {
+      sh.querySelector("#tkEveryMBox").hidden = when.value !== "monthly";
       sh.querySelector("#tkMonthBox").hidden = when.value !== "once";
       sh.querySelector("#tkMonthsBox").hidden = when.value !== "months";
     });
@@ -1392,11 +1444,12 @@ function taskSheet(t, occ, day){
       if (!title) { toast("Indiquez la tâche."); return; }
       const sc = sched.value;
       const data = {title, acr: readAcr(sh), shared: readShared(sh), ...readIcon(sh), cat, sched: sc, recur, month: null, months: [], remindDay: 0, remindTime: "", remindOn: false,
-        days: [], from: "", until: "", date: "", endDate: ""};
+        days: [], from: "", until: "", date: "", endDate: "", every: 1};
       if (sc === "weekdays") {
         data.days = getPicks(sh, "wd").map(Number).sort();
         data.from = sh.querySelector("#tkFrom").value || ymd(today); data.until = sh.querySelector("#tkUntil").value || "";
         if (!data.days.length) { toast("Cochez au moins un jour de la semaine."); return; }
+        data.every = readEvery(sh, "tkEveryW"); if (data.every === null) { toast("La périodicité doit être un nombre entre 1 et 99."); return; }
         if (data.until && data.until < data.from) { toast("La date de fin doit être après la date de début."); return; }
       }
       if (sc === "dates") {
@@ -1423,6 +1476,7 @@ function taskSheet(t, occ, day){
         if (!(data.remindDay >= 1 && data.remindDay <= 31)) { toast("Indiquez un jour du mois entre 1 et 31."); return; }
       }
       if (sc === "month" && recur === "once") { data.month = sh.querySelector("#tkMonth").value; if (!data.month) { toast("Choisissez le mois."); return; } }
+      if (sc === "month" && recur === "monthly") { data.every = readEvery(sh, "tkEveryM"); if (data.every === null) { toast("La périodicité doit être un nombre entre 1 et 99."); return; } }
       if (sc === "month" && recur === "months") { data.months = getPicks(sh, "months").map(Number); if (!data.months.length) { toast("Cochez au moins un mois."); return; } }
       if (isNew) { data.done = false; data.doneIn = []; data.startMonth = ym(state.taskMonth); guard(save("tasks", newId(), data)); }
       else {
@@ -1582,6 +1636,7 @@ function goTab(k){
 document.addEventListener("change", e => {
   const t = e.target;
   if (t.id === "notifMode") { setNotifMode(t.value); return; }
+  if (t.id === "quietOn" || t.id === "quietStart" || t.id === "quietEnd") { saveQuiet(); return; }
   if (t.id === "startMode") { setStartMode(t.value); return; }
   if (t.dataset.tk) {
     const task = state.tasks.find(x => x.id === t.dataset.tk); if (!task) return;

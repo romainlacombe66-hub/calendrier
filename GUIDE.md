@@ -101,7 +101,8 @@ Le dossier `.github` est caché sur la plupart des ordinateurs, on le crée donc
 ### 6e. Activer la page web
 1. **Settings** → **Pages**.
 2. Source : **Deploy from a branch**. Branch : **main**, dossier **/docs** → **Save**.
-3. Après une à deux minutes, l'adresse de l'appli s'affiche en haut : `https://VOTRE-NOM.github.io/calendrier/`.
+3. GitHub prépare alors le site. Après une à deux minutes, **rechargez la page** (touche F5) : un encadré « Your site is live at… » apparaît en haut, avec l'adresse de l'appli : `https://VOTRE-NOM.github.io/calendrier/` (VOTRE-NOM = votre nom d'utilisateur GitHub, en minuscules).
+   Si rien n'apparaît : onglet **Actions** du dépôt → la ligne « pages build and deployment » doit avoir une coche verte (un rond jaune = en cours, patientez). Vous pouvez aussi simplement taper l'adresse dans le navigateur.
 
 ### 6f. Autoriser cette adresse dans Firebase
 1. Firebase → **Authentication** → onglet **Paramètres** → **Domaines autorisés** → **Ajouter un domaine**.
@@ -127,7 +128,7 @@ L'appli fonctionne même sans réseau : les modifications partent dès le retour
 3. Sur GitHub, ouvrez l'onglet **Actions** → **Rappels** → **Run workflow** → **Run workflow**.
 4. Une à deux minutes plus tard, la notification arrive sur chaque téléphone inscrit. Supprimez ensuite l'événement « Test ».
 
-Ensuite, tout se fait tout seul : le programme tourne toutes les 15 minutes et n'envoie rien entre 22 h et 7 h (les rappels de la nuit arrivent à 7 h). Chaque rappel n'est envoyé qu'une fois.
+Ensuite, tout se fait tout seul : le programme tourne toutes les 15 minutes. Par défaut, rien n'est envoyé entre 22 h et 7 h (les rappels de la nuit arrivent à 7 h) : chacun peut changer ce créneau ou le couper dans Paramètres, sous « Mes rappels ». Chaque rappel n'est envoyé qu'une fois.
 *GitHub peut décaler un passage de quelques minutes aux heures chargées : c'est normal.*
 
 ---
@@ -160,7 +161,7 @@ name: Rappels
 
 on:
   schedule:
-    # Toutes les 15 minutes (heure UTC). Le programme ne notifie pas entre 22 h et 7 h (heure de Paris).
+    # Toutes les 15 minutes. Chacun choisit dans l'appli son créneau sans notification (par défaut de 22 h à 7 h).
     - cron: "*/15 * * * *"
   workflow_dispatch: {} # bouton « Run workflow » pour lancer un envoi à la main
 

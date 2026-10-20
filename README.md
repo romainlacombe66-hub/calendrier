@@ -7,7 +7,7 @@ Appli web installable (PWA) pour deux téléphones Android : calendrier commun (
   - `app.js` : connexion (Firebase Authentication), base de données (Firestore, avec cache hors connexion), inscription du téléphone aux notifications (Firebase Cloud Messaging).
   - `config.js` : les informations de **votre** projet Firebase (étape 3 du guide). Ne pas écraser lors d'une mise à jour.
   - `firebase-messaging-sw.js` : fonctionnement hors connexion et affichage des notifications.
-- **`scripts/send-reminders.mjs`** — envoie les notifications dues. Lancé toutes les 15 minutes par **`.github/workflows/rappels.yml`** (rien entre 22 h et 7 h).
+- **`scripts/send-reminders.mjs`** — envoie les notifications dues. Lancé toutes les 15 minutes par **`.github/workflows/rappels.yml`** (sauf pendant le créneau sans notification choisi par chacun, de 22 h à 7 h par défaut).
 - **`scripts/reminders.mjs`** — calcul des rappels, identique à la ligne « Rappels » de l'appli. Tests : `npm test`.
 - **`firestore.rules`** — seules les deux adresses e-mail listées accèdent aux données.
 

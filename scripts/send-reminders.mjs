@@ -4,10 +4,8 @@
 //   FIREBASE_SERVICE_ACCOUNT  contenu JSON de la clé du compte de service Firebase (secret GitHub)
 //   TZ=Europe/Paris           pour lire les heures à l'heure de Paris
 import admin from "firebase-admin";
-import { dueReminders, reminderMessage } from "./reminders.mjs";
+import { dueReminders, reminderMessage, inQuiet } from "./reminders.mjs";
 
-const QUIET_START = 22; // pas de notification de 22 h…
-const QUIET_END = 7;    // …à 7 h (les rappels de la nuit partent à 7 h)
 const PEOPLE = ["romain", "manon"];
 
 const raw = process.env.FIREBASE_SERVICE_ACCOUNT;
@@ -16,8 +14,12 @@ admin.initializeApp({ credential: admin.credential.cert(JSON.parse(raw)) });
 const db = admin.firestore();
 const now = new Date();
 
-if (now.getHours() >= QUIET_START || now.getHours() < QUIET_END) {
-  console.log(`${now.toLocaleString("fr-FR")} : heures calmes, aucun envoi.`);
+// Qui peut recevoir maintenant ? (« Mes rappels » avec téléphone, et hors de son créneau sans notification)
+const settings = Object.fromEntries((await db.collection("settings").get()).docs.map((d) => [d.id, d.data()]));
+const ready = PEOPLE.filter((who) => settings[who]?.notify && !inQuiet(settings[who].quiet, now));
+if (!ready.length) {
+  for (const who of PEOPLE) console.log(`${who} : notifications téléphone ${settings[who]?.notify ? "oui (dans son créneau sans notification)" : "non (Paramètres › Mes rappels)"}`);
+  console.log(`${now.toLocaleString("fr-FR")} : personne à notifier en ce moment.`);
   process.exit(0);
 }
 
@@ -33,37 +35,40 @@ const data = {
   projects: await read("projects", (c) => c.where("remindDate", ">", "")),
   categories: await read("categories", (c) => c),
 };
-const settings = Object.fromEntries((await db.collection("settings").get()).docs.map((d) => [d.id, d.data()]));
 const devices = (await db.collection("devices").get()).docs;
 let sent = 0;
 
+// Résumé lisible dans l'onglet Actions de GitHub (utile en cas de souci)
 for (const who of PEOPLE) {
-  if (!settings[who]?.notify) continue; // « Mes rappels » : téléphone non choisi
-  const mine = devices.filter((d) => d.data().who === who);
-  if (!mine.length) continue;
-  let tokens = mine.map((d) => d.id);
+  const st = settings[who] || {};
+  const n = devices.filter((d) => d.data().who === who).length;
+  console.log(`${who} : notifications téléphone ${st.notify ? "oui" : "non"} · ${n} téléphone(s) inscrit(s)${st.notify && !ready.includes(who) ? " · dans son créneau sans notification" : ""}`);
+}
 
-  for (const r of dueReminders(who, data, now)) {
-    // create() échoue si le document existe : chaque rappel n'est envoyé qu'une fois par personne.
-    try {
-      await db.collection("notifs").doc(`${r.key}_${who}`.replace(/\//g, "-")).create({ sentAt: now.toISOString(), at: r.at.toISOString(), who });
-    } catch (err) {
-      if (err.code === 6) continue; // déjà envoyé
-      throw err;
-    }
+for (const who of ready) {
+  let tokens = devices.filter((d) => d.data().who === who).map((d) => d.id);
+  const due = dueReminders(who, data, now);
+  console.log(`${who} : ${due.length} rappel(s) dû(s) en ce moment`);
+  if (!tokens.length) { if (due.length) console.log(`  aucun téléphone inscrit pour ${who} : rien n'est envoyé (Paramètres › Mes rappels sur le téléphone).`); continue; }
+
+  for (const r of due) {
+    // Chaque rappel n'est envoyé qu'une fois par personne ; il n'est noté comme envoyé que s'il est bien parti.
+    const mark = db.collection("notifs").doc(`${r.key}_${who}`.replace(/\//g, "-"));
+    if ((await mark.get()).exists) continue;
     const msg = reminderMessage(r, now);
     const res = await admin.messaging().sendEachForMulticast({
       tokens,
       data: { title: msg.title, body: msg.body, tag: r.key },
       webpush: { headers: { Urgency: "high", TTL: "86400" } },
-      android: { priority: "high" },
     });
     sent += res.successCount;
     console.log(`→ ${who} : ${msg.title} — ${msg.body} (${res.successCount}/${tokens.length} téléphone(s))`);
+    res.responses.forEach((x, i) => { if (!x.success) console.log(`  échec vers un téléphone : ${x.error?.code} ${x.error?.message || ""}`); });
+    if (res.successCount > 0) await mark.set({ sentAt: now.toISOString(), at: r.at.toISOString(), who });
 
     // Jetons périmés (appli désinstallée, notifications coupées) : on les oublie.
     const dead = res.responses
-      .map((x, i) => (!x.success && ["messaging/registration-token-not-registered", "messaging/invalid-registration-token", "messaging/invalid-argument"].includes(x.error?.code) ? tokens[i] : null))
+      .map((x, i) => (!x.success && ["messaging/registration-token-not-registered", "messaging/invalid-registration-token"].includes(x.error?.code) ? tokens[i] : null))
       .filter(Boolean);
     for (const t of dead) await db.collection("devices").doc(t).delete();
     if (dead.length) console.log(`  ${dead.length} téléphone(s) désinscrit(s) retiré(s).`);

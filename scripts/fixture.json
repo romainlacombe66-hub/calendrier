@@ -1,28 +1,285 @@
 {
-  "categories": [{"id": "sport", "label": "Sport", "color": "#2f6fd0", "who": "manon"}, {"id": "famille", "label": "Famille", "color": "#3f8a2e", "who": "tous"}],
+  "categories": [
+    {
+      "id": "sport",
+      "label": "Sport",
+      "color": "#2f6fd0",
+      "who": "manon"
+    },
+    {
+      "id": "famille",
+      "label": "Famille",
+      "color": "#3f8a2e",
+      "who": "tous"
+    }
+  ],
   "events": [
-    {"id": "a", "title": "Dîner chez Claire", "date": "2026-10-24", "time": "20:00", "cat": "commun", "remindH": 168},
-    {"id": "b", "title": "Yoga", "date": "2026-09-02", "time": "18:30", "cat": "manon", "repeat": "weekly", "months": [9, 10, 11], "remindAt": {"days": 0, "time": "08:00"}, "skips": [{"d": "2026-10-21", "to": "2026-10-22"}]},
-    {"id": "c", "title": "Gastro", "date": "2026-10-19", "time": "17:00", "cat": "romain", "remindH": 3},
-    {"id": "d", "title": "Maman", "date": "1960-10-25", "cat": "anniv", "isBirthday": true, "repeat": "yearly", "remindAt": {"days": 7, "time": "09:00"}},
-    {"id": "d2", "title": "Copine Léa", "date": "2000-10-20", "cat": "anniv", "isBirthday": true, "bdFor": "manon", "repeat": "yearly", "remindH": 48},
-    {"id": "d3", "title": "Pote Marc", "date": "2000-10-21", "cat": "famille", "isBirthday": true, "bdFor": "romain", "repeat": "yearly", "remindAt": {"days": 2, "time": "10:00"}},
-    {"id": "e", "title": "Passé", "date": "2026-10-18", "time": "10:00", "cat": "commun", "remindH": 24},
-    {"id": "f", "title": "Course", "date": "2026-10-20", "time": "07:30", "cat": "sport", "remindAt": {"days": 1, "time": "12:00"}},
-    {"id": "g", "title": "Réunion", "date": "2026-09-07", "time": "09:00", "cat": "commun", "repeat": "weekly", "remindAt": {"days": 1, "time": "14:00"}, "skips": [{"d": "2026-10-19"}, {"d": "2026-10-26", "note": "férié"}]},
-    {"id": "h", "title": "À classer", "date": "2026-10-20", "cat": "", "remindH": 48}
+    {
+      "id": "a",
+      "title": "Dîner chez Claire",
+      "date": "2026-10-24",
+      "time": "20:00",
+      "cat": "commun",
+      "remindH": 168
+    },
+    {
+      "id": "b",
+      "title": "Yoga",
+      "date": "2026-09-02",
+      "time": "18:30",
+      "cat": "manon",
+      "repeat": "weekly",
+      "months": [
+        9,
+        10,
+        11
+      ],
+      "remindAt": {
+        "days": 0,
+        "time": "08:00"
+      },
+      "skips": [
+        {
+          "d": "2026-10-21",
+          "to": "2026-10-22"
+        }
+      ]
+    },
+    {
+      "id": "c",
+      "title": "Gastro",
+      "date": "2026-10-19",
+      "time": "17:00",
+      "cat": "romain",
+      "remindH": 3
+    },
+    {
+      "id": "d",
+      "title": "Maman",
+      "date": "1960-10-25",
+      "cat": "anniv",
+      "isBirthday": true,
+      "repeat": "yearly",
+      "remindAt": {
+        "days": 7,
+        "time": "09:00"
+      }
+    },
+    {
+      "id": "d2",
+      "title": "Copine Léa",
+      "date": "2000-10-20",
+      "cat": "anniv",
+      "isBirthday": true,
+      "bdFor": "manon",
+      "repeat": "yearly",
+      "remindH": 48
+    },
+    {
+      "id": "d3",
+      "title": "Pote Marc",
+      "date": "2000-10-21",
+      "cat": "famille",
+      "isBirthday": true,
+      "bdFor": "romain",
+      "repeat": "yearly",
+      "remindAt": {
+        "days": 2,
+        "time": "10:00"
+      }
+    },
+    {
+      "id": "e",
+      "title": "Passé",
+      "date": "2026-10-18",
+      "time": "10:00",
+      "cat": "commun",
+      "remindH": 24
+    },
+    {
+      "id": "f",
+      "title": "Course",
+      "date": "2026-10-20",
+      "time": "07:30",
+      "cat": "sport",
+      "remindAt": {
+        "days": 1,
+        "time": "12:00"
+      }
+    },
+    {
+      "id": "g",
+      "title": "Réunion",
+      "date": "2026-09-07",
+      "time": "09:00",
+      "cat": "commun",
+      "repeat": "weekly",
+      "remindAt": {
+        "days": 1,
+        "time": "14:00"
+      },
+      "skips": [
+        {
+          "d": "2026-10-19"
+        },
+        {
+          "d": "2026-10-26",
+          "note": "férié"
+        }
+      ]
+    },
+    {
+      "id": "h",
+      "title": "À classer",
+      "date": "2026-10-20",
+      "cat": "",
+      "remindH": 48
+    },
+    {
+      "id": "i1",
+      "title": "Piscine",
+      "date": "2026-10-06",
+      "time": "18:00",
+      "cat": "commun",
+      "repeat": "weekly",
+      "every": 2,
+      "remindAt": {
+        "days": 1,
+        "time": "20:00"
+      }
+    },
+    {
+      "id": "i2",
+      "title": "Médoc",
+      "date": "2026-10-14",
+      "cat": "romain",
+      "repeat": "daily",
+      "every": 3,
+      "remindAt": {
+        "days": 0,
+        "time": "08:00"
+      }
+    }
   ],
   "tasks": [
-    {"id": "t1", "title": "Loyer", "cat": "romain", "recur": "monthly", "remindDay": 5, "remindTime": "09:00"},
-    {"id": "t2", "title": "Frigo", "cat": "commun", "recur": "once", "month": "2026-10", "remindDay": 19, "remindTime": "16:00"},
-    {"id": "t3", "title": "Poubelles", "cat": "commun", "sched": "weekdays", "days": [2, 4], "from": "2026-10-01", "remindOn": true, "remindTime": "19:00", "remindDays": 1, "skips": [{"d": "2026-10-22", "to": "2026-10-23"}]},
-    {"id": "t4", "title": "Clés", "cat": "manon", "sched": "dates", "date": "2026-10-21", "remindOn": true, "remindTime": "10:00", "remindDays": 2},
-    {"id": "t5", "title": "Arrosage", "cat": "commun", "sched": "weekdays", "days": [1], "remindOn": true, "remindTime": "08:00", "doneIn": ["2026-10-19"]},
-    {"id": "t6", "title": "Impôts", "cat": "commun", "recur": "months", "months": [10], "remindDay": 15, "doneIn": ["2026-10"]}
+    {
+      "id": "t1",
+      "title": "Loyer",
+      "cat": "romain",
+      "recur": "monthly",
+      "remindDay": 5,
+      "remindTime": "09:00"
+    },
+    {
+      "id": "t2",
+      "title": "Frigo",
+      "cat": "commun",
+      "recur": "once",
+      "month": "2026-10",
+      "remindDay": 19,
+      "remindTime": "16:00"
+    },
+    {
+      "id": "t3",
+      "title": "Poubelles",
+      "cat": "commun",
+      "sched": "weekdays",
+      "days": [
+        2,
+        4
+      ],
+      "from": "2026-10-01",
+      "remindOn": true,
+      "remindTime": "19:00",
+      "remindDays": 1,
+      "skips": [
+        {
+          "d": "2026-10-22",
+          "to": "2026-10-23"
+        }
+      ]
+    },
+    {
+      "id": "t4",
+      "title": "Clés",
+      "cat": "manon",
+      "sched": "dates",
+      "date": "2026-10-21",
+      "remindOn": true,
+      "remindTime": "10:00",
+      "remindDays": 2
+    },
+    {
+      "id": "t5",
+      "title": "Arrosage",
+      "cat": "commun",
+      "sched": "weekdays",
+      "days": [
+        1
+      ],
+      "remindOn": true,
+      "remindTime": "08:00",
+      "doneIn": [
+        "2026-10-19"
+      ]
+    },
+    {
+      "id": "t6",
+      "title": "Impôts",
+      "cat": "commun",
+      "recur": "months",
+      "months": [
+        10
+      ],
+      "remindDay": 15,
+      "doneIn": [
+        "2026-10"
+      ]
+    },
+    {
+      "id": "i3",
+      "title": "Encombrants",
+      "cat": "commun",
+      "sched": "weekdays",
+      "days": [
+        4
+      ],
+      "from": "2026-10-01",
+      "every": 2,
+      "remindOn": true,
+      "remindTime": "18:00",
+      "remindDays": 1
+    },
+    {
+      "id": "i4",
+      "title": "Filtre",
+      "cat": "commun",
+      "recur": "monthly",
+      "every": 2,
+      "startMonth": "2026-09",
+      "remindDay": 1
+    }
   ],
   "projects": [
-    {"id": "p1", "title": "Peinture", "cat": "commun", "remindDate": "2026-10-17", "remindTime": "09:00"},
-    {"id": "p2", "title": "Vacances", "cat": "manon", "remindDate": "2025-10-18", "yearly": true},
-    {"id": "p3", "title": "Vieux", "cat": "commun", "remindDate": "2026-10-01"}
+    {
+      "id": "p1",
+      "title": "Peinture",
+      "cat": "commun",
+      "remindDate": "2026-10-17",
+      "remindTime": "09:00"
+    },
+    {
+      "id": "p2",
+      "title": "Vacances",
+      "cat": "manon",
+      "remindDate": "2025-10-18",
+      "yearly": true
+    },
+    {
+      "id": "p3",
+      "title": "Vieux",
+      "cat": "commun",
+      "remindDate": "2026-10-01"
+    }
   ]
 }

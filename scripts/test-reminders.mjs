@@ -1,7 +1,7 @@
 // Tests de la logique des rappels :  npm test
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { dueReminders, reminderMessage } from "./reminders.mjs";
+import { dueReminders, reminderMessage, inQuiet } from "./reminders.mjs";
 
 const data = JSON.parse(readFileSync(new URL("./fixture.json", import.meta.url)));
 const keys = (who, now) => dueReminders(who, data, now).map((r) => r.key).sort();
@@ -49,6 +49,25 @@ assert.ok(!romain.includes("tt5@2026-10-19"));
 assert.ok(romain.includes("pp1@2026-10-17") && manon.includes("pp1@2026-10-17"));
 assert.ok(manon.includes("pp2@2026-10-18") && !romain.includes("pp2@2026-10-18"));
 assert.ok(!romain.includes("pp3@2026-10-01"));
+
+// Périodicités : Piscine 1 semaine sur 2 depuis le 6 oct. (20 oct. oui, 27 non) ; Médoc tous les 3 jours depuis le 14 (20 oui, 21 non)
+assert.ok(keys("romain", at("2026-10-19T20:05:00")).includes("i1@2026-10-20"));
+assert.ok(!keys("romain", at("2026-10-26T20:05:00")).includes("i1@2026-10-27"));
+assert.ok(keys("romain", at("2026-10-20T08:05:00")).includes("i2@2026-10-20"));
+assert.ok(!keys("romain", at("2026-10-21T08:05:00")).some((k) => k.startsWith("i2@")));
+// Encombrants jeudi 1 semaine sur 2 depuis le 1er oct. : 15 oui, 22 non
+assert.ok(keys("romain", at("2026-10-14T18:05:00")).includes("ti3@2026-10-15"));
+assert.ok(!keys("romain", at("2026-10-21T18:05:00")).includes("ti3@2026-10-22"));
+// Filtre tous les 2 mois depuis septembre : novembre oui, octobre non
+assert.ok(!romain.includes("ti4@2026-10"));
+assert.ok(keys("romain", at("2026-11-02T10:00:00")).includes("ti4@2026-11"));
+
+// Créneau sans notification
+assert.ok(inQuiet(undefined, at("2026-10-19T23:30:00")) && !inQuiet(undefined, at("2026-10-19T07:00:00")));
+assert.ok(inQuiet({ on: true, start: "00:00", end: "05:00" }, at("2026-10-19T04:59:00")));
+assert.ok(!inQuiet({ on: true, start: "00:00", end: "05:00" }, at("2026-10-19T23:30:00")));
+assert.ok(!inQuiet({ on: false, start: "22:00", end: "07:00" }, at("2026-10-19T23:30:00")));
+assert.ok(inQuiet({ on: true, start: "13:00", end: "14:00" }, at("2026-10-19T13:15:00")));
 
 const m = reminderMessage(dueReminders("romain", data, now).find((r) => r.key === "a@2026-10-24"), now);
 assert.equal(m.body, "Dîner chez Claire");

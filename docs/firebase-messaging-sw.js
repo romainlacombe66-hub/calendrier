@@ -5,7 +5,7 @@ importScripts(
   "https://www.gstatic.com/firebasejs/10.12.2/firebase-messaging-compat.js"
 );
 
-const CACHE = "calendrier-v2";
+const CACHE = "calendrier-v3";
 const SHELL = [
   "./", "./index.html", "./style.css", "./app.js", "./calendar.js", "./config.js",
   "./manifest.webmanifest", "./icon-192.png", "./icon-512.png",

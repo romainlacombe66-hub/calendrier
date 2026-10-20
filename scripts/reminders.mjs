@@ -9,6 +9,11 @@ const addDays = (d, n) => new Date(d.getFullYear(), d.getMonth(), d.getDate() + 
 const lastDay = (y, m) => new Date(y, m + 1, 0).getDate();
 const atTime = (d, time) => { const [hh, mm] = (time || "09:00").split(":").map(Number); return new Date(d.getFullYear(), d.getMonth(), d.getDate(), hh, mm); };
 const startOfDay = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
+// Périodicité « tous les N jours / semaines / mois / ans » (every, 1 par défaut)
+const everyOf = (x) => Math.max(1, Math.min(99, Math.round(Number(x.every) || 1)));
+const dayNum = (d) => Math.round(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()) / 864e5);
+const monthNum = (d) => d.getFullYear() * 12 + d.getMonth();
+const weekNum = (d) => Math.floor((dayNum(d) - ((d.getDay() + 6) % 7)) / 7);
 
 /* ---------- catégories ---------- */
 const BUILTIN = [
@@ -35,9 +40,11 @@ function occursBase(e, d) {
   const r = repeatOf(e);
   if (r === "none") return ymd(d) === e.date;
   if (e.months?.length && !e.months.includes(d.getMonth() + 1)) return false;
-  if (r === "weekly") return d.getDay() === s.getDay();
-  if (r === "monthly") return d.getDate() === s.getDate();
-  if (r === "yearly") return d.getDate() === s.getDate() && d.getMonth() === s.getMonth();
+  const n = everyOf(e);
+  if (r === "daily") return (dayNum(d) - dayNum(s)) % n === 0;
+  if (r === "weekly") return d.getDay() === s.getDay() && ((dayNum(d) - dayNum(s)) / 7) % n === 0;
+  if (r === "monthly") return d.getDate() === s.getDate() && (monthNum(d) - monthNum(s)) % n === 0;
+  if (r === "yearly") return d.getDate() === s.getDate() && d.getMonth() === s.getMonth() && (d.getFullYear() - s.getFullYear()) % n === 0;
   return false;
 }
 function nextOccurrence(e, now) {
@@ -58,6 +65,7 @@ const taskSched = (t) => t.sched || "month";
 const isoDow = (d) => (d.getDay() + 6) % 7 + 1;
 function taskOnDay(t, d) {
   const s = taskSched(t), k = ymd(d);
+  if (s === "weekdays" && everyOf(t) > 1 && !movedTo(t, k) && ((weekNum(d) - weekNum(parse(t.from || k))) % everyOf(t) + everyOf(t)) % everyOf(t) !== 0) return false;
   if (s === "weekdays" && movedTo(t, k)) return true;
   if (s === "weekdays") return (t.days || []).includes(isoDow(d)) && (!t.from || k >= t.from) && (!t.until || k <= t.until) && !skipOf(t, k);
   if (s === "dates") return !!t.date && k >= t.date && k <= (t.endDate && t.endDate > t.date ? t.endDate : t.date);
@@ -73,7 +81,7 @@ function taskIn(t, ymStr) {
   const r = taskRecur(t), m = Number(ymStr.slice(5));
   if (r === "once") return t.month === ymStr;
   if (t.startMonth && ymStr < t.startMonth) return false;
-  if (r === "monthly") return true;
+  if (r === "monthly") { const n = everyOf(t), ref = t.startMonth || t.month; return n <= 1 || !ref || (monthNum(parse(ymStr + "-01")) - monthNum(parse(ref + "-01"))) % n === 0; }
   if (r === "months") return (t.months || []).includes(m);
   return false;
 }
@@ -135,4 +143,14 @@ export function reminderMessage(r, now = new Date()) {
   if (r.kind === "project") return { title: "Projet", body: r.title };
   if (r.kind === "anniv") return { title: "Anniversaire " + whenText(r.at, now, false), body: r.title };
   return { title: "Rappel · " + whenText(r.at, now, r.hasTime), body: r.title };
+}
+
+/* ---------- créneau sans notification (réglage de chaque profil) ---------- */
+// quiet = {on, start:"HH:MM", end:"HH:MM"} ; absent = de 22:00 à 07:00. Le créneau peut passer minuit.
+export function inQuiet(quiet, now = new Date()) {
+  const q = { on: true, start: "22:00", end: "07:00", ...(quiet || {}) };
+  if (!q.on || q.start === q.end) return false;
+  const min = (t) => { const [h, m] = t.split(":").map(Number); return h * 60 + m; };
+  const n = now.getHours() * 60 + now.getMinutes(), s = min(q.start), e = min(q.end);
+  return s < e ? n >= s && n < e : n >= s || n < e;
 }
