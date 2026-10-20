@@ -200,7 +200,10 @@ nav.tabs svg{width:22px;height:22px}
 /* activités */
 .seg.subtabs{grid-template-columns:1.3fr .95fr .95fr 1.45fr}
 /* boutons de l'en-tête : plus grands et bien espacés pour éviter les fausses manipulations */
-#undoBtn,#todayBtn{width:48px;height:48px;border-radius:14px;flex:none}
+#undoBtn,#redoBtn,#todayBtn{width:48px;height:48px;border-radius:14px;flex:none}
+#topBtns.three{gap:8px!important}
+#topBtns.three .iconbtn{width:42px;height:42px;border-radius:12px}
+header.top:has(#topBtns.three) h1{font-size:clamp(1.05rem,4.8vw,1.45rem)}
 /* titre de page : une seule ligne, taille adaptée aux petits écrans */
 header.top > div:first-child{min-width:0;flex:1}
 header.top h1{font-size:clamp(1.15rem,5.4vw,1.45rem);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -210,7 +213,7 @@ input[type=time]{min-width:0}
 .row > .field:has(> input[type=date]){flex:1 1 auto !important;min-width:0 !important}
 /* barre de sous-onglets compacte */
 .seg.subtabs button{font-size:.8rem;padding:8px 3px;line-height:1.2}
-#undoBtn svg,#todayBtn svg{width:24px;height:24px}
+#undoBtn svg,#redoBtn svg,#todayBtn svg{width:24px;height:24px}
 .filters{display:flex;flex-wrap:wrap;gap:6px}
 .filters button{border:1px solid var(--line);background:var(--surface);border-radius:999px;padding:5px 12px;font-size:.82rem;font-weight:700;color:var(--muted)}
 .filters button[aria-pressed="true"]{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}

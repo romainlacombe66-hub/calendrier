@@ -59,10 +59,14 @@
       <button class="who-btn eyebrow" id="profileBtn">Manon &amp; Romain</button>
       <h1 id="pageTitle">Calendrier commun</h1>
     </div>
-    <div class="row" style="flex-wrap:nowrap;gap:22px">
+    <div class="row" id="topBtns" style="flex-wrap:nowrap;gap:22px">
       <button class="iconbtn" id="undoBtn" aria-label="Retour en arrière" title="Retour en arrière" disabled>
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg>
         <span class="badge" id="undoCount" hidden>0</span>
+      </button>
+      <button class="iconbtn" id="redoBtn" aria-label="Annuler le retour en arrière" title="Annuler le retour en arrière" hidden>
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m15 14 5-5-5-5"/><path d="M20 9H9.5a5.5 5.5 0 0 0 0 11H13"/></svg>
+        <span class="badge" id="redoCount" hidden>0</span>
       </button>
       <button class="iconbtn" id="todayBtn" aria-label="Revenir à aujourd'hui" title="Aujourd'hui">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/><circle cx="12" cy="15" r="1.6" fill="currentColor"/></svg>

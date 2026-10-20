@@ -311,20 +311,28 @@ async function rawRemove(col, id){
   else { mem[col].delete(id); refreshMem(); }
 }
 // Retour en arrière : on garde l'état précédent des 5 dernières modifications (sur cet appareil)
-const UNDO_MAX = 5, undoStack = [];
+// Retour en arrière / annulation du retour : propres à chaque profil (et à ce téléphone), 5 au plus.
+// Chaque entrée garde l'état avant (prev) et après (next) de SON changement : si l'autre profil a modifié
+// l'élément entre-temps, le retour en arrière est refusé, pour ne jamais défaire le travail de l'autre.
+const UNDO_MAX = 5, stacks = {};
+const S = () => (stacks[state.me || ""] ||= {undo: [], redo: []});
 function prevOf(col, id){
   const src = col === "settings" ? state.settings[id] : (state[col] || []).find(x => x.id === id);
   if (!src) return null;
   const {id: _drop, ...rest} = src;
   return JSON.parse(JSON.stringify(rest));
 }
-function pushUndo(entry){
-  undoStack.push(entry);
-  while (undoStack.length > UNDO_MAX) undoStack.shift();
+// Comparaison de deux états (ordre des champs et champs vides ignorés)
+const canon = v => JSON.stringify(v, (k, x) => x && typeof x === "object" && !Array.isArray(x) ? Object.fromEntries(Object.entries(x).filter(([, y]) => y !== undefined).sort(([a], [b]) => a.localeCompare(b))) : x);
+const sameState = (a, b) => canon(a ?? null) === canon(b ?? null);
+function pushUndo(entry, keepRedo){
+  const st = S(); st.undo.push(entry);
+  while (st.undo.length > UNDO_MAX) st.undo.shift();
+  if (!keepRedo) st.redo = []; // une nouvelle action efface les « annuler le retour » en attente
   renderUndo();
 }
-function record(col, id, verb, title){
-  pushUndo({col, id, verb, title, prev: prevOf(col, id), label: `${verb}${title ? " de « " + title + " »" : ""}`});
+function record(col, id, verb, title, next){
+  pushUndo({col, id, verb, title, prev: prevOf(col, id), next: next ? JSON.parse(JSON.stringify(next)) : null, label: `${verb}${title ? " de « " + title + " »" : ""}`});
 }
 const titleOf = (col, id, data) => data?.title || data?.label || prevOf(col, id)?.title || prevOf(col, id)?.label || (col === "settings" ? "un réglage" : "");
 // Journal partagé : qui a ajouté, modifié ou supprimé quoi (pour l'onglet Nouveautés de l'autre personne)
@@ -338,28 +346,59 @@ function logChange(col, id, verb, title, data, note){
   rawSave("log", "l" + newId(), {by: state.me || "", verb, col, itemId: id, title: title || "", kind: kindOf(col, id, data), at: new Date().toISOString(), note: note || "", ...(onlyFor ? {onlyFor} : {})}).catch(() => {});
 }
 async function save(col, id, data){ const had = !!prevOf(col, id), verb = had ? "modification" : "ajout", title = titleOf(col, id, data);
-  record(col, id, verb, title); await rawSave(col, id, data); logChange(col, id, verb, title, data); }
+  record(col, id, verb, title, data); await rawSave(col, id, data); logChange(col, id, verb, title, data); }
 async function patch(col, id, data){ const title = titleOf(col, id, data), full = {...(prevOf(col, id) || {}), ...data};
-  record(col, id, "modification", title); await rawPatch(col, id, data); logChange(col, id, "modification", title, full); }
+  record(col, id, "modification", title, full); await rawPatch(col, id, data); logChange(col, id, "modification", title, full); }
 async function remove(col, id){ const title = titleOf(col, id), before = prevOf(col, id);
-  record(col, id, "suppression", title); await rawRemove(col, id); logChange(col, id, "suppression", title, before); }
+  record(col, id, "suppression", title, null); await rawRemove(col, id); logChange(col, id, "suppression", title, before); }
 function renderUndo(){
-  const b = $("#undoBtn"), c = $("#undoCount"), last = undoStack[undoStack.length - 1];
-  b.disabled = !last; c.hidden = !last; c.textContent = undoStack.length;
+  const st = S(), b = $("#undoBtn"), c = $("#undoCount"), last = st.undo[st.undo.length - 1];
+  b.disabled = !last; c.hidden = !last; c.textContent = st.undo.length;
   b.title = last ? `Retour en arrière : ${last.label}` : "Rien à annuler";
   b.setAttribute("aria-label", b.title);
+  const r = $("#redoBtn"), rc = $("#redoCount"), lastR = st.redo[st.redo.length - 1];
+  r.hidden = !lastR; rc.hidden = !lastR; rc.textContent = st.redo.length;
+  r.title = lastR ? `Annuler le retour en arrière : ${lastR.label}` : "";
+  r.setAttribute("aria-label", r.title || "Annuler le retour en arrière");
+  $("#topBtns").classList.toggle("three", !!lastR);
+}
+const otherName = () => WHO[OTHER[state.me]] || "l'autre profil";
+// Écrit un état complet (ou supprime si null) et le note dans le journal
+async function applyState(u, target, verb, note){
+  if (target) await rawSave(u.col, u.id, target); else await rawRemove(u.col, u.id);
+  logChange(u.col, u.id, verb, u.title, target || u.prev || u.next, note);
 }
 async function undo(){
-  const u = undoStack.pop(); renderUndo(); if (!u) return;
+  const st = S(), u = st.undo.pop(); renderUndo(); if (!u) return;
   try {
     if (u.custom) await u.custom();
     else {
-      if (u.prev) await rawSave(u.col, u.id, u.prev); else await rawRemove(u.col, u.id);
-      const undoVerb = u.verb === "suppression" ? "ajout" : u.verb === "ajout" ? "suppression" : "annulation";
-      logChange(u.col, u.id, undoVerb, u.title, u.prev || prevOf(u.col, u.id), "retour en arrière");
+      if (!sameState(prevOf(u.col, u.id), u.next)) {
+        toast(`« ${u.title || "Cet élément"} » a été changé depuis (par ${otherName()} ?) : ce retour en arrière n'est plus possible.`);
+        return;
+      }
+      const verb = u.verb === "suppression" ? "ajout" : u.verb === "ajout" ? "suppression" : "annulation";
+      await applyState(u, u.prev, verb, "retour en arrière");
     }
-    toast(`Annulé : ${u.label}${undoStack.length ? ` · encore ${undoStack.length} possible${undoStack.length > 1 ? "s" : ""}` : ""}`);
+    st.redo.push(u); while (st.redo.length > UNDO_MAX) st.redo.shift(); renderUndo();
+    toast(`Annulé : ${u.label}${st.undo.length ? ` · encore ${st.undo.length} possible${st.undo.length > 1 ? "s" : ""}` : ""}`);
   } catch (err) { toast("Retour en arrière impossible : " + (err?.code || "erreur")); }
+}
+// Annule le dernier retour en arrière (refait l'action), qui redevient annulable
+async function redo(){
+  const st = S(), u = st.redo.pop(); renderUndo(); if (!u) return;
+  try {
+    if (u.custom) { if (u.redo) await u.redo(); }
+    else {
+      if (!sameState(prevOf(u.col, u.id), u.prev)) {
+        toast(`« ${u.title || "Cet élément"} » a été changé depuis (par ${otherName()} ?) : impossible de rétablir.`);
+        return;
+      }
+      await applyState(u, u.next, u.verb, "retour en arrière annulé");
+    }
+    pushUndo(u, true);
+    toast(`Rétabli : ${u.label}${st.redo.length ? ` · encore ${st.redo.length} à rétablir` : ""}`);
+  } catch (err) { toast("Impossible de rétablir : " + (err?.code || "erreur")); }
 }
 function refreshMem(){
   for (const k of ["events","tasks","projects","categories","log"]) state[k] = [...mem[k].values()];
@@ -950,7 +989,8 @@ async function markSeen(){
   pushUndo({label: `« Tout marquer comme vu » (${n} nouveauté${n > 1 ? "s" : ""})`, custom: async () => {
     const restored = {...(state.settings.seen || {})};
     if (prev[me]) restored[me] = prev[me]; else delete restored[me];
-    state.settings.seen = restored; await rawSave("settings", "seen", restored); render(); }});
+    state.settings.seen = restored; await rawSave("settings", "seen", restored); render(); },
+    redo: async () => { const again = {...(state.settings.seen || {}), [me]: next[me]}; state.settings.seen = again; await rawSave("settings", "seen", again); render(); }});
   goTab("cal");
 }
 
@@ -1647,7 +1687,8 @@ document.addEventListener("click", e => {
     const key = vu.dataset.vu, title = dueReminders().find(r => r.key === key)?.title || "";
     dismissed[key] = 1; store.set("cc-rem-vus", JSON.stringify(dismissed)); renderReminders();
     pushUndo({label: `« Vu » sur le rappel${title ? " « " + title + " »" : ""}`, custom: () => {
-      delete dismissed[key]; store.set("cc-rem-vus", JSON.stringify(dismissed)); renderReminders(); }});
+      delete dismissed[key]; store.set("cc-rem-vus", JSON.stringify(dismissed)); renderReminders(); },
+      redo: () => { dismissed[key] = 1; store.set("cc-rem-vus", JSON.stringify(dismissed)); renderReminders(); }});
     return; }
   const day = t.closest(".day[data-d]"); if (day) { state.sel = day.dataset.d; const d = parse(state.sel);
     if (d.getMonth() !== state.view.getMonth()) state.view = new Date(d.getFullYear(), d.getMonth(), 1); renderCal(); return; }
@@ -1727,6 +1768,7 @@ $("#hidePast").addEventListener("change", e => { state.hidePast = e.target.check
 $("#evSort").addEventListener("change", e => { state.evSort = e.target.value; store.set("cc-evsort", state.evSort); renderEvents(); });
 $("#newsSeen").onclick = () => markSeen();
 $("#undoBtn").onclick = () => undo();
+$("#redoBtn").onclick = () => redo();
 $("#monthLabel").onclick = () => monthPicker(state.view, showCalMonth);
 $("#taskMonth").onclick = () => monthPicker(state.taskMonth, d => { state.taskMonth = d; renderTasks(); });
 $("#actSearch").addEventListener("input", e => { state.allQuery = e.target.value; renderTabs(); renderAll(); });
