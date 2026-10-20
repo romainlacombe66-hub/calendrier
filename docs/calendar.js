@@ -51,7 +51,11 @@ const daysBetween = (a, b) => Math.round((parse(b) - parse(a)) / 864e5); // b �
 const hasRem = x => x.remindH > 0 || !!x.remindAt;
 const leadText = days => days === 0 ? "le jour même" : days === 1 ? "la veille" : `${days} jours avant`;
 // Texte court d'un rappel : « 3 jours avant » ou « la veille à 18:00 »
-const remText = x => x.remindAt ? `${leadText(x.remindAt.days || 0)} à ${x.remindAt.time || "09:00"}` : x.remindH > 0 ? remLabel(x.remindH) : "";
+const remText = x => (x.remindAt ? `${leadText(x.remindAt.days || 0)} à ${x.remindAt.time || "09:00"}` : x.remindH > 0 ? remLabel(x.remindH) : "") + (x.push === false && hasRem(x) ? " · appli seulement" : "");
+// Où arrive le rappel de cette activité : appli + téléphone (par défaut) ou appli seulement
+const pushField = (id, v) => `<div class="field"><label for="${id}">Où ?</label><select id="${id}"><option value="1">Dans l'appli et sur le téléphone</option><option value="0" ${v === false ? "selected" : ""}>Dans l'appli seulement</option></select>
+  <span class="note">Le téléphone ne reçoit le rappel que si « Mes rappels » l'inclut dans Paramètres.</span></div>`;
+const readPush = (sh, id) => sh.querySelector("#" + id)?.value !== "0";
 // Rappel : soit un délai avant (semaines, jours, heures), soit une date et une heure précises
 function reminderField(x, note, base){
   const at = x?.remindAt, on = !!at || x?.remindH > 0, {n, unit} = splitRem(x?.remindH || 0), mode = x?.remindH > 0 ? "before" : "at";
@@ -69,6 +73,7 @@ function reminderField(x, note, base){
         <select id="remUnit" style="flex:1;min-width:0">${Object.entries(REM_UNITS).map(([k,u]) => `<option value="${k}" ${k === unit ? "selected" : ""}>${u.many} avant</option>`).join("")}</select>
       </div>
       <span class="note" id="remHint"></span>
+      ${pushField("remPush", x?.push)}
     </div>
     <span class="note">${note}</span></div>`;
 }
@@ -90,18 +95,19 @@ function wireReminder(sh, getBase, repeats){
 }
 // Renvoie {remindH, remindAt}, ou null si la saisie est invalide
 function readReminder(sh, base){
-  if (!sh.querySelector("#remOn").checked) return {remindH: 0, remindAt: null};
+  if (!sh.querySelector("#remOn").checked) return {remindH: 0, remindAt: null, push: true};
+  const push = readPush(sh, "remPush");
   if (sh.querySelector("#remMode").value === "at") {
     const d = sh.querySelector("#remDate").value, time = sh.querySelector("#remTime").value || "09:00";
     if (!d) { toast("Choisissez la date du rappel."); return null; }
     const days = daysBetween(d, base);
     if (days < 0) { toast("Le rappel doit tomber avant la date ou le jour même."); return null; }
     if (days > 366) { toast("Le rappel ne peut pas être plus d'un an avant."); return null; }
-    return {remindH: 0, remindAt: {days, time}};
+    return {remindH: 0, remindAt: {days, time}, push};
   }
   const n = Math.round(Number(sh.querySelector("#remN").value)), u = REM_UNITS[sh.querySelector("#remUnit").value];
   if (!(n >= 1 && n <= 999)) { sh.querySelector("#remN").focus(); toast("Indiquez un nombre entre 1 et 999 pour le rappel."); return null; }
-  return {remindH: n * u.h, remindAt: null};
+  return {remindH: n * u.h, remindAt: null, push};
 }
 const monthsLabel = ms => (ms||[]).slice().sort((a,b)=>a-b).map(m => MONTHS[m-1]).join(", ");
 const norm = s => String(s || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
@@ -740,13 +746,13 @@ function taskRecurText(t){
   if (s === "weekdays") {
     const ds = (t.days || []).slice().sort().map(n => DAYS_LONG[n - 1]);
     const base = (everyOf(t) > 1 ? `Toutes les ${everyOf(t)} semaines : ` : "") + (ds.length ? (everyOf(t) > 1 ? "" : "Chaque ") + (ds.length > 1 ? ds.slice(0, -1).join(", ") + " et " + ds[ds.length - 1] : ds[0]) : "Jours à choisir");
-    return [base, t.from && t.from > ymd(today) ? "à partir du " + fmtShort(t.from) : "", t.until ? "jusqu'au " + fmtShort(t.until) : "", t.remindOn ? "rappel " + leadText(Number(t.remindDays) || 0) + " à " + (t.remindTime || "09:00") : ""].filter(Boolean).join(" · ");
+    return [base, t.from && t.from > ymd(today) ? "à partir du " + fmtShort(t.from) : "", t.until ? "jusqu'au " + fmtShort(t.until) : "", t.remindOn ? "rappel " + leadText(Number(t.remindDays) || 0) + " à " + (t.remindTime || "09:00") + (t.push === false ? " (appli seulement)" : "") : ""].filter(Boolean).join(" · ");
   }
-  if (s === "dates" && taskRep(t) !== "none") return [everyText(taskRep(t), everyOf(t)) + (t.date ? " depuis le " + fmtShort(t.date) : ""), t.until ? "jusqu'au " + fmtShort(t.until) : "", t.remindOn ? "rappel " + leadText(Number(t.remindDays) || 0) + " à " + (t.remindTime || "09:00") : ""].filter(Boolean).join(" · ");
-  if (s === "dates") return [t.endDate && t.endDate > t.date ? `du ${fmtShort(t.date)} au ${fmtShort(t.endDate)}` : t.date ? "le " + fmtShort(t.date) : "", t.remindOn ? "rappel " + leadText(Number(t.remindDays) || 0) + " à " + (t.remindTime || "09:00") : ""].filter(Boolean).join(" · ");
+  if (s === "dates" && taskRep(t) !== "none") return [everyText(taskRep(t), everyOf(t)) + (t.date ? " depuis le " + fmtShort(t.date) : ""), t.until ? "jusqu'au " + fmtShort(t.until) : "", t.remindOn ? "rappel " + leadText(Number(t.remindDays) || 0) + " à " + (t.remindTime || "09:00") + (t.push === false ? " (appli seulement)" : "") : ""].filter(Boolean).join(" · ");
+  if (s === "dates") return [t.endDate && t.endDate > t.date ? `du ${fmtShort(t.date)} au ${fmtShort(t.endDate)}` : t.date ? "le " + fmtShort(t.date) : "", t.remindOn ? "rappel " + leadText(Number(t.remindDays) || 0) + " à " + (t.remindTime || "09:00") + (t.push === false ? " (appli seulement)" : "") : ""].filter(Boolean).join(" · ");
   const r = taskRecur(t);
   const base = r === "monthly" ? everyText("monthly", everyOf(t)) : r === "months" ? "Chaque année en " + monthsLabel(t.months) : "";
-  return [base, t.remindDay > 0 ? "rappel le " + t.remindDay + " à " + (t.remindTime || "09:00") : ""].filter(Boolean).join(" · ");
+  return [base, t.remindDay > 0 ? "rappel le " + t.remindDay + " à " + (t.remindTime || "09:00") + (t.push === false ? " (appli seulement)" : "") : ""].filter(Boolean).join(" · ");
 }
 function taskRow(t, m, d, prefix){
   const c = catInfo(taskCat(t)), s = taskSched(t), id = esc(t.id), mvd = d && movedTo(t, ymd(d));
@@ -1419,6 +1425,7 @@ function taskSheet(t, occ, day){
           <div class="field" id="tkRemDayBox" style="flex:1;min-width:0" ${sch0 !== "month" ? "hidden" : ""}><label for="tkRemDay">Le (jour du mois)</label><input type="number" id="tkRemDay" min="1" max="31" value="${t?.remindDay || 1}"></div>
           <div class="field" style="flex:1;min-width:0"><label for="tkRemTime">À</label><input type="time" id="tkRemTime" value="${esc(t?.remindTime || "09:00")}"></div>
         </div>
+        <div id="tkRemPushBox" ${t?.remindDay > 0 || t?.remindOn ? "" : "hidden"}>${pushField("tkRemPush", t?.push)}</div>
         <span class="note">Le rappel s'affiche dans l'encart Rappels tant que la tâche n'est pas cochée.</span>
       </div>
       ${occBlock(t, "tasks", occ)}
@@ -1439,7 +1446,7 @@ function taskSheet(t, occ, day){
       sh.querySelector("#tkRemDateBox").hidden = v !== "dates";
       sh.querySelector("#tkRemLeadBox").hidden = v !== "weekdays";
     });
-    remOn.addEventListener("change", () => { sh.querySelector("#tkRemBox").hidden = !remOn.checked; });
+    remOn.addEventListener("change", () => { sh.querySelector("#tkRemBox").hidden = !remOn.checked; sh.querySelector("#tkRemPushBox").hidden = !remOn.checked; });
     // le rappel garde son écart quand la date de la tâche change
     { const td = sh.querySelector("#tkDate"), rd = sh.querySelector("#tkRemDate"); let lead = Number(t?.remindDays) || 0;
       rd.addEventListener("change", () => { if (td.value && rd.value) lead = daysBetween(rd.value, td.value); });
@@ -1465,7 +1472,7 @@ function taskSheet(t, occ, day){
       if (!title) { toast("Indiquez la tâche."); return; }
       const sc = sched.value;
       const data = {title, acr: readAcr(sh), shared: readShared(sh), ...readIcon(sh), cat, sched: sc, recur, month: null, months: [], remindDay: 0, remindTime: "", remindOn: false,
-        days: [], from: "", until: "", date: "", endDate: "", every: 1, repeat: "none"};
+        days: [], from: "", until: "", date: "", endDate: "", every: 1, repeat: "none", push: remOn.checked ? readPush(sh, "tkRemPush") : true};
       if (sc === "weekdays") {
         data.days = getPicks(sh, "wd").map(Number).sort();
         data.from = sh.querySelector("#tkFrom").value || ymd(today); data.until = sh.querySelector("#tkUntil").value || "";
@@ -1540,6 +1547,7 @@ function projectSheet(p, day){
           <div class="field" style="flex:2;min-width:0"><label for="pjRemDate">Le</label><input type="date" id="pjRemDate" value="${esc(p?.remindDate || day || ymd(today))}"></div>
           <div class="field" style="flex:1;min-width:0"><label for="pjRemTime">À</label><input type="time" id="pjRemTime" value="${esc(p?.remindTime || "09:00")}"></div>
         </div>
+        <div id="pjRemPushBox" ${p?.remindDate ? "" : "hidden"}>${pushField("pjRemPush", p?.push)}</div>
         <span class="note">Si le projet revient chaque année, le rappel aussi.</span>
       </div>
       ${p?.when ? `<div class="field"><label for="pjWhen">Précision</label><input type="text" id="pjWhen" value="${esc(p.when)}"></div>` : ""}
@@ -1551,7 +1559,7 @@ function projectSheet(p, day){
       </div>
     </form>`, sh => {
     const yearly = sh.querySelector("#pjYearly"), pjRemOn = sh.querySelector("#pjRemOn");
-    pjRemOn.addEventListener("change", () => { sh.querySelector("#pjRemBox").hidden = !pjRemOn.checked; });
+    pjRemOn.addEventListener("change", () => { sh.querySelector("#pjRemBox").hidden = !pjRemOn.checked; sh.querySelector("#pjRemPushBox").hidden = !pjRemOn.checked; });
     yearly.addEventListener("change", () => { sh.querySelector("#pjYearBox").hidden = yearly.checked; });
     const steps = sh.querySelector("#pjSteps");
     sh.querySelector("#pjAddStep")?.addEventListener("click", () => {
@@ -1580,7 +1588,8 @@ function projectSheet(p, day){
         months: getPicks(sh, "months").map(Number), yearly: yearly.checked,
         year: yearly.checked ? null : Number(sh.querySelector("#pjYear").value) || today.getFullYear(),
         remindDate: pjRemOn.checked ? sh.querySelector("#pjRemDate").value : "",
-        remindTime: pjRemOn.checked ? (sh.querySelector("#pjRemTime").value || "09:00") : ""
+        remindTime: pjRemOn.checked ? (sh.querySelector("#pjRemTime").value || "09:00") : "",
+        push: pjRemOn.checked ? readPush(sh, "pjRemPush") : true
       };
       if (pjRemOn.checked && !data.remindDate) { toast("Choisissez la date du rappel."); return; }
       const w = sh.querySelector("#pjWhen"); if (w) data.when = w.value.trim();

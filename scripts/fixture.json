@@ -159,6 +159,15 @@
         "days": 0,
         "time": "08:00"
       }
+    },
+    {
+      "id": "q1",
+      "title": "Appli seulement",
+      "date": "2026-10-24",
+      "time": "10:00",
+      "cat": "commun",
+      "remindH": 168,
+      "push": false
     }
   ],
   "tasks": [

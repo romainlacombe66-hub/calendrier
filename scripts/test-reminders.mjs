@@ -72,6 +72,11 @@ assert.ok(!keys("romain", at("2026-11-19T09:05:00")).includes("tr2@2026-11-20"))
 assert.ok(!keys("romain", at("2026-12-19T09:05:00")).includes("tr2@2026-12-20"));
 assert.ok(keys("romain", at("2026-12-20T09:05:00")).includes("tr2@2026-12-21"));
 
+// Rappel « dans l'appli seulement » : calculé, mais marqué sans notification
+const q = dueReminders("romain", data, now).find((r) => r.key === "q1@2026-10-24");
+assert.ok(q && q.push === false);
+assert.ok(dueReminders("romain", data, now).find((r) => r.key === "a@2026-10-24").push === true);
+
 // Créneau sans notification
 assert.ok(inQuiet(undefined, at("2026-10-19T23:30:00")) && !inQuiet(undefined, at("2026-10-19T07:00:00")));
 assert.ok(inQuiet({ on: true, start: "00:00", end: "05:00" }, at("2026-10-19T04:59:00")));

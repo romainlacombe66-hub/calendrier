@@ -47,8 +47,8 @@ for (const who of PEOPLE) {
 
 for (const who of ready) {
   let tokens = devices.filter((d) => d.data().who === who).map((d) => d.id);
-  const due = dueReminders(who, data, now);
-  console.log(`${who} : ${due.length} rappel(s) dû(s) en ce moment`);
+  const all = dueReminders(who, data, now), due = all.filter((r) => r.push);
+  console.log(`${who} : ${due.length} rappel(s) dû(s) en ce moment${all.length > due.length ? ` (+ ${all.length - due.length} « dans l'appli seulement »)` : ""}`);
   if (!tokens.length) { if (due.length) console.log(`  aucun téléphone inscrit pour ${who} : rien n'est envoyé (Paramètres › Mes rappels sur le téléphone).`); continue; }
 
   for (const r of due) {

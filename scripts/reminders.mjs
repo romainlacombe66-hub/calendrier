@@ -103,14 +103,15 @@ function taskDone(t, ymStr) {
 const taskDoneOn = (t, d) => (perDay(t) ? (t.doneIn || []).includes(ymd(d)) : taskSched(t) === "dates" ? !!t.done : taskDone(t, ym(d)));
 
 /* ---------- rappels dus pour une personne ---------- */
-// data = {events, tasks, projects, categories} (listes de documents avec id) ; renvoie [{key, kind, title, at, occ}]
+// data = {events, tasks, projects, categories} (listes de documents avec id) ; renvoie [{key, push, kind, title, at}]
+// push = false : rappel « dans l'appli seulement » (pas de notification téléphone)
 export function dueReminders(who, data, now = new Date()) {
   const mine = catsOf(who, data.categories || []), out = [];
   for (const e of (data.events || []).filter(bdVisibleTo(who))) {
     if (!(e.remindH > 0 || e.remindAt) || !e.date || !mine.includes(e.cat)) continue;
     const at = nextOccurrence(e, now); if (!at) continue;
     const fire = e.remindAt ? atTime(addDays(at, -(e.remindAt.days || 0)), e.remindAt.time) : new Date(at.getTime() - e.remindH * 3600e3);
-    if (fire <= now) out.push({ key: e.id + "@" + ymd(at), kind: isBday(e) ? "anniv" : "event", title: e.title, at, hasTime: !!e.time });
+    if (fire <= now) out.push({ key: e.id + "@" + ymd(at), push: e.push !== false, kind: isBday(e) ? "anniv" : "event", title: e.title, at, hasTime: !!e.time });
   }
   const m = ym(now);
   for (const t of data.tasks || []) {
@@ -121,13 +122,13 @@ export function dueReminders(who, data, now = new Date()) {
         const D = addDays(startOfDay(now), k);
         if (!taskOnDay(t, D) || taskDoneOn(t, D)) continue;
         const at = atTime(addDays(D, -lead), t.remindTime);
-        if (at <= now) out.push({ key: "t" + t.id + "@" + ymd(D), kind: "task-day", title: t.title, at: D });
+        if (at <= now) out.push({ key: "t" + t.id + "@" + ymd(D), push: t.push !== false, kind: "task-day", title: t.title, at: D });
       }
       continue;
     }
     if (!(t.remindDay > 0) || !mine.includes(taskCat(t)) || !taskIn(t, m) || taskDone(t, m)) continue;
     const at = atTime(new Date(now.getFullYear(), now.getMonth(), Math.min(t.remindDay, lastDay(now.getFullYear(), now.getMonth()))), t.remindTime);
-    if (at <= now) out.push({ key: "t" + t.id + "@" + m, kind: "task-month", title: t.title, at });
+    if (at <= now) out.push({ key: "t" + t.id + "@" + m, push: t.push !== false, kind: "task-month", title: t.title, at });
   }
   for (const p of data.projects || []) {
     if (!p.remindDate || !mine.includes(p.cat || "commun")) continue;
@@ -135,7 +136,7 @@ export function dueReminders(who, data, now = new Date()) {
     const d = p.yearly ? new Date(now.getFullYear(), s.getMonth(), s.getDate()) : s;
     if (p.yearly && d < s) continue;
     const at = atTime(d, p.remindTime);
-    if (at <= now && now - at < 7 * 864e5) out.push({ key: "p" + p.id + "@" + ymd(at), kind: "project", title: p.title, at });
+    if (at <= now && now - at < 7 * 864e5) out.push({ key: "p" + p.id + "@" + ymd(at), push: p.push !== false, kind: "project", title: p.title, at });
   }
   return out;
 }
