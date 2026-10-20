@@ -3,7 +3,7 @@ name: Rappels
 on:
   schedule:
     # Toutes les 15 minutes (heure UTC). Le programme ne notifie pas entre 22 h et 7 h (heure de Paris).
-    - cron: "*/15 * * * *"
+    - cron: "*/5 * * * *"
   workflow_dispatch: {} # bouton « Run workflow » pour lancer un envoi à la main
 
 concurrency:
