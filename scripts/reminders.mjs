@@ -63,11 +63,19 @@ const taskRecur = (t) => t.recur || "once";
 const taskCat = (t) => t.cat || (t.who === "manon" || t.who === "romain" ? t.who : t.who ? "commun" : "");
 const taskSched = (t) => t.sched || "month";
 const isoDow = (d) => (d.getDay() + 6) % 7 + 1;
+const taskRep = (t) => (t.sched === "dates" && t.repeat && t.repeat !== "none" ? t.repeat : "none");
+const perDay = (t) => taskSched(t) === "weekdays" || taskRep(t) !== "none";
 function taskOnDay(t, d) {
   const s = taskSched(t), k = ymd(d);
   if (s === "weekdays" && everyOf(t) > 1 && !movedTo(t, k) && ((weekNum(d) - weekNum(parse(t.from || k))) % everyOf(t) + everyOf(t)) % everyOf(t) !== 0) return false;
   if (s === "weekdays" && movedTo(t, k)) return true;
   if (s === "weekdays") return (t.days || []).includes(isoDow(d)) && (!t.from || k >= t.from) && (!t.until || k <= t.until) && !skipOf(t, k);
+  if (s === "dates" && taskRep(t) !== "none") {
+    if (!t.date) return false;
+    if (movedTo(t, k)) return true;
+    if (skipOf(t, k) || (t.until && k > t.until)) return false;
+    return occursBase({ date: t.date, repeat: t.repeat, every: t.every }, d);
+  }
   if (s === "dates") return !!t.date && k >= t.date && k <= (t.endDate && t.endDate > t.date ? t.endDate : t.date);
   return false;
 }
@@ -87,11 +95,12 @@ function taskIn(t, ymStr) {
 }
 function taskDone(t, ymStr) {
   const s = taskSched(t);
+  if (perDay(t)) { const days = taskDaysIn(t, ymStr); return days.length > 0 && days.every((x) => (t.doneIn || []).includes(ymd(x))); }
   if (s === "dates") return !!t.done;
   if (s === "weekdays") { const days = taskDaysIn(t, ymStr); return days.length > 0 && days.every((x) => (t.doneIn || []).includes(ymd(x))); }
   return taskRecur(t) === "once" ? !!(t.done || (t.doneIn || []).includes(ymStr)) : (t.doneIn || []).includes(ymStr);
 }
-const taskDoneOn = (t, d) => (taskSched(t) === "weekdays" ? (t.doneIn || []).includes(ymd(d)) : taskSched(t) === "dates" ? !!t.done : taskDone(t, ym(d)));
+const taskDoneOn = (t, d) => (perDay(t) ? (t.doneIn || []).includes(ymd(d)) : taskSched(t) === "dates" ? !!t.done : taskDone(t, ym(d)));
 
 /* ---------- rappels dus pour une personne ---------- */
 // data = {events, tasks, projects, categories} (listes de documents avec id) ; renvoie [{key, kind, title, at, occ}]

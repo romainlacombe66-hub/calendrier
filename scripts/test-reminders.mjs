@@ -62,6 +62,16 @@ assert.ok(!keys("romain", at("2026-10-21T18:05:00")).includes("ti3@2026-10-22"))
 assert.ok(!romain.includes("ti4@2026-10"));
 assert.ok(keys("romain", at("2026-11-02T10:00:00")).includes("ti4@2026-11"));
 
+// Tâches à une date qui se répètent : Arroser tous les 3 jours depuis le 14 (20 oui, 21 non ; 17 coché)
+assert.ok(keys("romain", at("2026-10-20T08:05:00")).includes("tr1@2026-10-20"));
+assert.ok(!keys("romain", at("2026-10-21T08:05:00")).some((k) => k.startsWith("tr1@")));
+assert.ok(!keys("romain", at("2026-10-17T08:05:00")).includes("tr1@2026-10-17"));
+// Filtre piscine le 20, un mois sur deux depuis août, la veille à 9 h ; 20 déc. déplacé au 21
+assert.ok(keys("romain", at("2026-10-19T09:05:00")).includes("tr2@2026-10-20"));
+assert.ok(!keys("romain", at("2026-11-19T09:05:00")).includes("tr2@2026-11-20"));
+assert.ok(!keys("romain", at("2026-12-19T09:05:00")).includes("tr2@2026-12-20"));
+assert.ok(keys("romain", at("2026-12-20T09:05:00")).includes("tr2@2026-12-21"));
+
 // Créneau sans notification
 assert.ok(inQuiet(undefined, at("2026-10-19T23:30:00")) && !inQuiet(undefined, at("2026-10-19T07:00:00")));
 assert.ok(inQuiet({ on: true, start: "00:00", end: "05:00" }, at("2026-10-19T04:59:00")));

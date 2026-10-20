@@ -254,7 +254,10 @@ const spanDays = e => (e.endDate && e.date && e.endDate > e.date) ? Math.min(366
 // Dates retirées d'une récurrence : skips = [{d:"AAAA-MM-JJ", note, by}] ; avec to:"AAAA-MM-JJ", la date est déplacée à ce jour
 const skipOf = (x, k) => (x.skips || []).find(s => s.d === k);
 const movedTo = (x, k) => (x.skips || []).find(s => s.to === k);
-const isRecurring = (x, col) => col === "tasks" ? taskSched(x) === "weekdays" : repeatOf(x) !== "none";
+const isRecurring = (x, col) => col === "tasks" ? taskSched(x) === "weekdays" || taskRep(x) !== "none" : repeatOf(x) !== "none";
+// Tâche « à une date » qui se répète (tous les N jours / semaines / mois / ans)
+const taskRep = t => t.sched === "dates" && t.repeat && t.repeat !== "none" ? t.repeat : "none";
+const perDay = t => taskSched(t) === "weekdays" || taskRep(t) !== "none"; // cochée jour par jour
 function occursOn(e, d){
   const key = ymd(d);
   if (movedTo(e, key)) return true;
@@ -701,6 +704,12 @@ function taskOnDay(t, d){
   if (s === "weekdays" && everyOf(t) > 1 && !movedTo(t, k) && ((weekNum(d) - weekNum(parse(t.from || k))) % everyOf(t) + everyOf(t)) % everyOf(t) !== 0) return false;
   if (s === "weekdays" && movedTo(t, k)) return true;
   if (s === "weekdays") return (t.days || []).includes(isoDow(d)) && (!t.from || k >= t.from) && (!t.until || k <= t.until) && !skipOf(t, k);
+  if (s === "dates" && taskRep(t) !== "none") {
+    if (!t.date) return false;
+    if (movedTo(t, k)) return true;
+    if (skipOf(t, k) || (t.until && k > t.until)) return false;
+    return occursBase({date: t.date, repeat: t.repeat, every: t.every}, d);
+  }
   if (s === "dates") return !!t.date && k >= t.date && k <= (t.endDate && t.endDate > t.date ? t.endDate : t.date);
   return false;
 }
@@ -709,7 +718,7 @@ function taskDaysIn(t, ymStr){
   for (let d = 1; d <= lastDay(y, m - 1); d++) { const x = new Date(y, m - 1, d); if (taskOnDay(t, x)) out.push(x); }
   return out;
 }
-const taskDoneOn = (t, d) => taskSched(t) === "weekdays" ? (t.doneIn || []).includes(ymd(d)) : taskSched(t) === "dates" ? !!t.done : taskDone(t, ym(d));
+const taskDoneOn = (t, d) => perDay(t) ? (t.doneIn || []).includes(ymd(d)) : taskSched(t) === "dates" ? !!t.done : taskDone(t, ym(d));
 function taskIn(t, ymStr){
   if (taskSched(t) !== "month") return taskDaysIn(t, ymStr).length > 0;
   const r = taskRecur(t), m = Number(ymStr.slice(5));
@@ -721,6 +730,7 @@ function taskIn(t, ymStr){
 }
 function taskDone(t, ymStr){
   const s = taskSched(t);
+  if (perDay(t)) { const days = taskDaysIn(t, ymStr); return days.length > 0 && days.every(x => (t.doneIn || []).includes(ymd(x))); }
   if (s === "dates") return !!t.done;
   if (s === "weekdays") { const days = taskDaysIn(t, ymStr); return days.length > 0 && days.every(x => (t.doneIn || []).includes(ymd(x))); }
   return taskRecur(t) === "once" ? !!(t.done || (t.doneIn||[]).includes(ymStr)) : (t.doneIn||[]).includes(ymStr);
@@ -732,6 +742,7 @@ function taskRecurText(t){
     const base = (everyOf(t) > 1 ? `Toutes les ${everyOf(t)} semaines : ` : "") + (ds.length ? (everyOf(t) > 1 ? "" : "Chaque ") + (ds.length > 1 ? ds.slice(0, -1).join(", ") + " et " + ds[ds.length - 1] : ds[0]) : "Jours à choisir");
     return [base, t.from && t.from > ymd(today) ? "à partir du " + fmtShort(t.from) : "", t.until ? "jusqu'au " + fmtShort(t.until) : "", t.remindOn ? "rappel " + leadText(Number(t.remindDays) || 0) + " à " + (t.remindTime || "09:00") : ""].filter(Boolean).join(" · ");
   }
+  if (s === "dates" && taskRep(t) !== "none") return [everyText(taskRep(t), everyOf(t)) + (t.date ? " depuis le " + fmtShort(t.date) : ""), t.until ? "jusqu'au " + fmtShort(t.until) : "", t.remindOn ? "rappel " + leadText(Number(t.remindDays) || 0) + " à " + (t.remindTime || "09:00") : ""].filter(Boolean).join(" · ");
   if (s === "dates") return [t.endDate && t.endDate > t.date ? `du ${fmtShort(t.date)} au ${fmtShort(t.endDate)}` : t.date ? "le " + fmtShort(t.date) : "", t.remindOn ? "rappel " + leadText(Number(t.remindDays) || 0) + " à " + (t.remindTime || "09:00") : ""].filter(Boolean).join(" · ");
   const r = taskRecur(t);
   const base = r === "monthly" ? everyText("monthly", everyOf(t)) : r === "months" ? "Chaque année en " + monthsLabel(t.months) : "";
@@ -741,13 +752,13 @@ function taskRow(t, m, d, prefix){
   const c = catInfo(taskCat(t)), s = taskSched(t), id = esc(t.id), mvd = d && movedTo(t, ymd(d));
   const rt = [mvd ? "déplacée du " + parse(mvd.d).toLocaleDateString("fr-FR", {weekday:"short", day:"numeric", month:"short"}) : "", taskRecurText(t)].filter(Boolean).join(" · ");
   let box, done;
-  if (s === "weekdays" && !d) {
+  if (perDay(t) && !d) {
     const days = taskDaysIn(t, m), n = days.filter(x => (t.doneIn || []).includes(ymd(x))).length;
     done = days.length > 0 && n === days.length;
     box = `<span class="cnt" title="Faites ce mois-ci">${n}/${days.length}</span>`;
   } else {
     done = d ? taskDoneOn(t, d) : taskDone(t, m);
-    box = `<input type="checkbox" id="${prefix}-${id}" data-tk="${id}" ${s === "weekdays" ? `data-tday="${ymd(d)}"` : `data-m="${m}"`} ${done ? "checked" : ""} aria-label="Faite">`;
+    box = `<input type="checkbox" id="${prefix}-${id}" data-tk="${id}" ${perDay(t) ? `data-tday="${ymd(d)}"` : `data-m="${m}"`} ${done ? "checked" : ""} aria-label="Faite">`;
   }
   return `<div class="task ${done ? "done" : ""} ${ICONS[t.icon] ? "light" : ""}">${box}
     <button class="t linklike" data-edtk="${id}" ${d ? `data-occ="${ymd(d)}"` : ""} aria-label="Modifier la tâche ${esc(t.title)}"><b>${iconTag(t)}${acrTag(t)}${esc(t.title)}</b>${rt || t.example ? `<br><span class="m">${[rt, t.example ? "exemple" : ""].filter(Boolean).join(" · ")}</span>` : ""}</button>
@@ -1202,13 +1213,13 @@ function setMe(k){
 const quietOf = me => ({on: true, start: "22:00", end: "07:00", ...(state.settings[me]?.quiet || {})});
 function quietField(me){
   const q = quietOf(me), m = notifModeOf(me);
-  return `<div class="field" id="quietBox" ${m === "both" || m === "phone" ? "" : "hidden"}>
+  return `<div class="field" id="quietBox"><span class="lbl">Créneau sans notification</span>
     <label class="switch" for="quietOn"><input type="checkbox" id="quietOn" ${q.on ? "checked" : ""}>Pas de notification pendant un créneau</label>
     <div class="row" id="quietTimes" style="flex-wrap:nowrap" ${q.on ? "" : "hidden"}>
       <div class="field" style="flex:1;min-width:0"><label for="quietStart">De</label><input type="time" id="quietStart" value="${esc(q.start)}"></div>
       <div class="field" style="flex:1;min-width:0"><label for="quietEnd">À</label><input type="time" id="quietEnd" value="${esc(q.end)}"></div>
     </div>
-    <span class="note">${q.on ? `Rien n'arrive sur le téléphone de ${esc(q.start)} à ${esc(q.end)} ; les rappels de ce créneau arrivent à ${esc(q.end)}.` : "Les notifications peuvent arriver à toute heure."}</span></div>`;
+    <span class="note">${q.on ? `Rien n'arrive sur le téléphone de ${esc(q.start)} à ${esc(q.end)} ; les rappels de ce créneau arrivent à ${esc(q.end)}.` : "Les notifications peuvent arriver à toute heure."}${m === "both" || m === "phone" ? "" : " (S'applique quand « Mes rappels » inclut le téléphone.)"}</span></div>`;
 }
 function saveQuiet(){
   if (!state.me) return;
@@ -1368,7 +1379,7 @@ function armDelete(btn, label, onConfirm){
 function taskSheet(t, occ, day){
   const isNew = !t;
   let cat0 = t ? taskCat(t) : (state.me && state.mode === "moi" ? state.me : "commun"); if (cat0 === "anniv") cat0 = "commun";
-  const rec0 = t ? taskRecur(t) : "once", sch0 = t ? taskSched(t) : "month";
+  const rec0 = t ? taskRecur(t) : "once", sch0 = t ? taskSched(t) : "month", tr0 = t ? taskRep(t) : "none";
   openSheet(`
     <div class="eyebrow">${isNew ? "Nouvelle tâche" : "Modifier la tâche"}</div>
     <form id="tkForm" class="stack">
@@ -1388,9 +1399,11 @@ function taskSheet(t, occ, day){
         <p class="note">Pour « toutes les 2 semaines » ou plus, la semaine de « À partir du » est la première.</p></div>
       <div class="field" id="tkDateBox" ${sch0 !== "dates" ? "hidden" : ""}>
         <div class="row" style="flex-wrap:nowrap">
-          <div class="field" style="flex:1;min-width:0"><label for="tkDate">Le</label><input type="date" id="tkDate" value="${esc(t?.date || day || ymd(today))}"></div>
-          <div class="field" style="flex:1;min-width:0"><label for="tkEnd">Jusqu'au <span style="font-weight:400">(facultatif)</span></label><input type="date" id="tkEnd" value="${esc(t?.endDate || "")}"></div>
-        </div></div>
+          <div class="field" style="flex:1;min-width:0"><label for="tkDate">${tr0 === "none" ? "Le" : "Première date"}</label><input type="date" id="tkDate" value="${esc(t?.date || day || ymd(today))}"></div>
+          <div class="field" style="flex:1;min-width:0"><label for="tkEnd">${tr0 === "none" ? "Jusqu'au" : "Fin de la répétition"} <span style="font-weight:400">(facultatif)</span></label><input type="date" id="tkEnd" value="${esc((tr0 === "none" ? t?.endDate : t?.until) || "")}"></div>
+        </div>
+        <div class="field" style="margin-top:6px"><label for="tkRep">Répétition</label><select id="tkRep">${Object.entries(REPEAT).map(([k, l]) => `<option value="${k}" ${k === tr0 ? "selected" : ""}>${l}</option>`).join("")}</select></div>
+        <div style="margin-top:6px">${everyField("tkEveryD", tr0 !== "none" && t ? everyOf(t) : 1, "", tr0 === "none")}</div></div>
       <div id="tkMonthGroup" class="stack" ${sch0 !== "month" ? "hidden" : ""}>
       <div class="field"><label for="tkWhen">Quels mois ?</label>
         <select id="tkWhen">${[["once","Un seul mois"],["monthly","Tous les mois"],["months","Certains mois, chaque année"]].map(([k,l]) => `<option value="${k}" ${k===rec0?"selected":""}>${l}</option>`).join("")}</select></div>
@@ -1432,6 +1445,14 @@ function taskSheet(t, occ, day){
       rd.addEventListener("change", () => { if (td.value && rd.value) lead = daysBetween(rd.value, td.value); });
       td.addEventListener("change", () => { if (td.value) rd.value = ymd(addDays(parse(td.value), -lead)); }); }
     wireEvery(sh, "tkEveryW", () => ["semaine", "semaines", true]);
+    const tkRep = sh.querySelector("#tkRep");
+    const updD = wireEvery(sh, "tkEveryD", () => { const u = EVERY_UNIT[tkRep.value] || ["jour","jours"]; return [u[0], u[1], tkRep.value === "weekly"]; });
+    tkRep.addEventListener("change", () => {
+      const r = tkRep.value !== "none";
+      sh.querySelector("#tkEveryDBox").hidden = !r; updD();
+      sh.querySelector('label[for="tkDate"]').textContent = r ? "Première date" : "Le";
+      sh.querySelector('label[for="tkEnd"]').innerHTML = (r ? "Fin de la répétition" : "Jusqu'au") + ' <span style="font-weight:400">(facultatif)</span>';
+    });
     wireEvery(sh, "tkEveryM", () => ["mois", "mois", false]);
     when.addEventListener("change", () => {
       sh.querySelector("#tkEveryMBox").hidden = when.value !== "monthly";
@@ -1444,7 +1465,7 @@ function taskSheet(t, occ, day){
       if (!title) { toast("Indiquez la tâche."); return; }
       const sc = sched.value;
       const data = {title, acr: readAcr(sh), shared: readShared(sh), ...readIcon(sh), cat, sched: sc, recur, month: null, months: [], remindDay: 0, remindTime: "", remindOn: false,
-        days: [], from: "", until: "", date: "", endDate: "", every: 1};
+        days: [], from: "", until: "", date: "", endDate: "", every: 1, repeat: "none"};
       if (sc === "weekdays") {
         data.days = getPicks(sh, "wd").map(Number).sort();
         data.from = sh.querySelector("#tkFrom").value || ymd(today); data.until = sh.querySelector("#tkUntil").value || "";
@@ -1455,6 +1476,12 @@ function taskSheet(t, occ, day){
       if (sc === "dates") {
         data.date = sh.querySelector("#tkDate").value; data.endDate = sh.querySelector("#tkEnd").value || "";
         if (!data.date) { toast("Choisissez la date."); return; }
+        data.repeat = tkRep.value;
+        if (data.repeat !== "none") {
+          data.until = data.endDate; data.endDate = "";
+          data.every = readEvery(sh, "tkEveryD"); if (data.every === null) { toast("La périodicité doit être un nombre entre 1 et 99."); return; }
+          if (data.until && data.until < data.date) { toast("La fin de la répétition doit être après la première date."); return; }
+        }
         if (data.endDate && data.endDate < data.date) { toast("La date de fin doit être après la date de début."); return; }
       }
       if (sc !== "month") {

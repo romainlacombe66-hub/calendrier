@@ -10,6 +10,7 @@ import {
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { getMessaging, getToken, deleteToken, onMessage, isSupported } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-messaging.js";
 
+const APP_VERSION = "20 octobre 2026 (3)"; // affichée dans Paramètres, tout en bas
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const store = {
@@ -122,7 +123,7 @@ window.APP_HOOKS = {
   },
   account() {
     const u = auth.currentUser;
-    return `<div class="account"><span class="m">Connecté : ${esc(u?.email || "")}</span><button type="button" class="btn ghost" id="logoutBtn">Se déconnecter</button></div>`;
+    return `<div class="account"><span class="m">Connecté : ${esc(u?.email || "")}<br>Version de l'appli : ${APP_VERSION}</span><button type="button" class="btn ghost" id="logoutBtn">Se déconnecter</button></div>`;
   },
 };
 document.addEventListener("click", async (e) => {

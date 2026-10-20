@@ -5,7 +5,7 @@ importScripts(
   "https://www.gstatic.com/firebasejs/10.12.2/firebase-messaging-compat.js"
 );
 
-const CACHE = "calendrier-v3";
+const CACHE = "calendrier-v4";
 const SHELL = [
   "./", "./index.html", "./style.css", "./app.js", "./calendar.js", "./config.js",
   "./manifest.webmanifest", "./icon-192.png", "./icon-512.png",
@@ -28,8 +28,10 @@ self.addEventListener("fetch", (e) => {
   const u = new URL(e.request.url);
   const cacheable = u.origin === location.origin || u.hostname === "www.gstatic.com" || u.hostname.endsWith("fonts.googleapis.com") || u.hostname.endsWith("fonts.gstatic.com");
   if (e.request.method !== "GET" || !cacheable) return;
+  // Fichiers de l'appli : toujours redemandés au serveur (pas de vieille copie), le cache ne sert que hors connexion.
+  const req = u.origin === location.origin ? new Request(e.request.url, { cache: "no-cache", credentials: "same-origin" }) : e.request;
   e.respondWith(
-    fetch(e.request)
+    fetch(req)
       .then((r) => {
         if (r.ok) { const copy = r.clone(); caches.open(CACHE).then((c) => c.put(e.request, copy)); }
         return r;
