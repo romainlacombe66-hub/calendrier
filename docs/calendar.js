@@ -191,7 +191,7 @@ const state = {
   tab:"cal", sub:"events", setSub:"prefs", remsOpen: store.get("cc-rems-open") === "1", evMonth:null, auditType:"all", allType:"all", allQuery:"", bdQuery:"", evSort:"date", hidePast:true, view:new Date(today.getFullYear(), today.getMonth(), 1), sel:ymd(today),
   taskMonth:new Date(today.getFullYear(), today.getMonth(), 1),
   me:null, mode:"tout", settings:{}, categories:[],
-  events:[], tasks:[], projects:[], sync:{}, log:[]
+  events:[], tasks:[], projects:[], sync:{}, log:[], shoplists:[], shopitems:[], products:[], dishes:[], shopCur:null
 };
 { const hp = store.get("cc-hidepast"); if (hp !== null) state.hidePast = hp === "1"; const so = store.get("cc-evsort"); if (so) state.evSort = so; }
 { const m = store.get("cc-me"); if (m === "romain" || m === "manon") { state.me = m; state.mode = store.get("cc-start") || "moi"; } }
@@ -297,7 +297,7 @@ function repeatText(e){
 
 /* ---------- stockage ---------- */
 let db = null;
-const mem = {events:new Map(), tasks:new Map(), projects:new Map(), categories:new Map(), settings:new Map(), log:new Map()};
+const mem = {events:new Map(), tasks:new Map(), projects:new Map(), categories:new Map(), settings:new Map(), log:new Map(), shoplists:new Map(), shopitems:new Map(), products:new Map(), dishes:new Map()};
 async function rawSave(col, id, data){
   if (db) await db.collection(col).doc(id).set(data);
   else { mem[col].set(id, {...data, id}); refreshMem(); }
@@ -334,14 +334,14 @@ function pushUndo(entry, keepRedo){
 function record(col, id, verb, title, next){
   pushUndo({col, id, verb, title, prev: prevOf(col, id), next: next ? JSON.parse(JSON.stringify(next)) : null, label: `${verb}${title ? " de « " + title + " »" : ""}`});
 }
-const titleOf = (col, id, data) => data?.title || data?.label || prevOf(col, id)?.title || prevOf(col, id)?.label || (col === "settings" ? "un réglage" : "");
+const titleOf = (col, id, data) => data?.title || data?.label || data?.name || prevOf(col, id)?.name || prevOf(col, id)?.title || prevOf(col, id)?.label || (col === "settings" ? "un réglage" : "");
 // Journal partagé : qui a ajouté, modifié ou supprimé quoi (pour l'onglet Nouveautés de l'autre personne)
 function kindOf(col, id, data){
   if (col === "events") { const e = data || (state.events.find(x => x.id === id)); return e && (e.isBirthday || e.cat === "anniv") ? "anniversaire" : "événement"; }
   return {tasks:"tâche", projects:"projet", categories:"catégorie"}[col] || "";
 }
 function logChange(col, id, verb, title, data, note){
-  if (col === "settings" || col === "log") return;
+  if (["settings","log","shoplists","shopitems","products","dishes"].includes(col)) return; // les courses ne remplissent pas les Nouveautés
   const onlyFor = col === "events" && data && isBday(data) && bdOwner(data) !== "commun" ? bdOwner(data) : "";
   rawSave("log", "l" + newId(), {by: state.me || "", verb, col, itemId: id, title: title || "", kind: kindOf(col, id, data), at: new Date().toISOString(), note: note || "", ...(onlyFor ? {onlyFor} : {})}).catch(() => {});
 }
@@ -401,7 +401,7 @@ async function redo(){
   } catch (err) { toast("Impossible de rétablir : " + (err?.code || "erreur")); }
 }
 function refreshMem(){
-  for (const k of ["events","tasks","projects","categories","log"]) state[k] = [...mem[k].values()];
+  for (const k of ["events","tasks","projects","categories","log","shoplists","shopitems","products","dishes"]) state[k] = [...mem[k].values()];
   state.settings = Object.fromEntries(mem.settings);
   applyStartMode(); render();
 }
@@ -1213,7 +1213,7 @@ function categorySheet(c){
   });
 }
 
-const TITLES = {todo:"À classer", news:"Nouveautés", cal:"Calendrier commun", act:"Activités", set:"Paramètres"};
+const TITLES = {todo:"À classer", news:"Nouveautés", cal:"Calendrier commun", act:"Activités", shop:"Courses", set:"Paramètres"};
 const SUBS = {events:"Événements", tasks:"Tâches", proj:"Projets", anniv:"Anniversaires"};
 function renderTabs(){
   const nTodo = unassignedEvents().length + unassignedTasks().length;
@@ -1225,8 +1225,9 @@ function renderTabs(){
   document.querySelector('nav [data-tab="news"]').hidden = !nNews;
   $("#newsBadge").textContent = nNews;
   if (state.tab === "news" && !nNews) state.tab = "cal";
+  document.querySelector("nav.tabs .in").classList.toggle("many", [...document.querySelectorAll("nav [data-tab]")].filter(b => !b.hidden).length > 5);
   document.querySelectorAll("nav [data-tab]").forEach(b => b.dataset.tab === state.tab ? b.setAttribute("aria-current","page") : b.removeAttribute("aria-current"));
-  ["todo","news","cal","act","set"].forEach(k => { $("#tab-"+k).hidden = k !== state.tab; });
+  ["todo","news","cal","act","shop","set"].forEach(k => { $("#tab-"+k).hidden = k !== state.tab; });
   const searching = !!norm(state.allQuery);
   Object.keys(SUBS).forEach(k => { $("#tab-"+k).hidden = !(state.tab === "act" && state.sub === k && !searching); });
   $("#tab-results").hidden = !(state.tab === "act" && searching);
@@ -1236,10 +1237,508 @@ function renderTabs(){
   $("#todayBtn").hidden = state.tab !== "cal";
 }
 function render(){
-  applyTheme(); updateCatStyles(); renderTabs(); renderModes(); renderReminders(); renderCal(); applyLayout(); renderTasks(); renderProjects(); renderAnniv(); renderTodo(); renderAll(); renderEvents(); renderNews(); renderAudit(); renderUndo();
+  applyTheme(); updateCatStyles(); renderTabs(); renderModes(); renderReminders(); renderCal(); applyLayout(); renderTasks(); renderProjects(); renderAnniv(); renderTodo(); renderAll(); renderEvents(); renderNews(); renderAudit(); renderShop(); renderUndo();
   if (state.tab === "set" && !document.activeElement?.closest?.("#tab-set")) renderSettings();
   else if (state.tab !== "set") renderSettings();
 }
+
+/* ---------- courses ---------- */
+// Rayons dans l'ordre d'un parcours de magasin habituel (l'ordre se change dans l'onglet Courses, commun aux deux profils)
+const RAYONS = [
+  ["fruits", "Fruits et légumes"], ["boulangerie", "Boulangerie"], ["cremerie", "Crèmerie et œufs"], ["fromage", "Fromages"],
+  ["viande", "Boucherie et volaille"], ["poisson", "Poissonnerie"], ["traiteur", "Charcuterie et traiteur"], ["surgeles", "Surgelés"],
+  ["epicerie", "Épicerie salée"], ["conserves", "Conserves et sauces"], ["sucre", "Épicerie sucrée"], ["petitdej", "Petit-déjeuner"],
+  ["boissons", "Boissons"], ["hygiene", "Hygiène et beauté"], ["maison", "Entretien et maison"], ["bebe", "Bébé"], ["animaux", "Animaux"], ["autre", "Autre"],
+];
+const RAYON = Object.fromEntries(RAYONS);
+// Unités : celles « au poids / au volume » ne se mettent pas au pluriel
+const UNITS = ["", "g", "kg", "ml", "cl", "l", "pièce", "paquet", "boîte", "bouteille", "pot", "sachet", "tranche", "botte", "barquette", "rouleau", "brique", "filet"];
+const UNIT_FIXED = ["g", "kg", "ml", "cl", "l"];
+const plural = w => /[sxz]$/.test(w) ? w : w + "s";
+function qtyText(q, u){
+  const n = Number(q) || 0, v = Number.isInteger(n) ? String(n) : String(Math.round(n * 100) / 100).replace(".", ",");
+  if (!u) return n ? "× " + v : "";
+  return `${v} ${UNIT_FIXED.includes(u) || n <= 1 ? u : plural(u)}`;
+}
+// Catalogue de départ : « nom|rayon|unité|quantité par défaut »
+const CATALOG = `Pommes|fruits|kg|1;Bananes|fruits||6;Oranges|fruits|kg|1;Citrons|fruits||3;Clémentines|fruits|kg|1;Poires|fruits|kg|1;Raisin|fruits|g|500;Fraises|fruits|barquette|1;Kiwis|fruits||4;Avocats|fruits||2;
+Tomates|fruits|kg|1;Tomates cerises|fruits|barquette|1;Salade|fruits||1;Concombre|fruits||1;Courgettes|fruits||3;Carottes|fruits|kg|1;Pommes de terre|fruits|kg|2;Oignons|fruits|filet|1;Échalotes|fruits|filet|1;Ail|fruits||1;
+Poivrons|fruits||2;Brocoli|fruits||1;Champignons|fruits|barquette|1;Haricots verts|fruits|g|500;Épinards|fruits|g|500;Poireaux|fruits||3;Aubergines|fruits||2;Persil|fruits|botte|1;Basilic|fruits|pot|1;Gingembre|fruits|g|100;
+Pain|boulangerie||1;Baguette|boulangerie||1;Pain de mie|boulangerie|paquet|1;Croissants|boulangerie||4;Pain complet|boulangerie||1;
+Lait|cremerie|brique|6;Beurre|cremerie|g|250;Œufs|cremerie||12;Yaourts nature|cremerie|paquet|1;Yaourts aux fruits|cremerie|paquet|1;Crème fraîche|cremerie|pot|1;Crème liquide|cremerie|brique|1;Fromage blanc|cremerie|pot|1;Desserts lactés|cremerie|paquet|1;Pâte brisée|cremerie||1;Pâte feuilletée|cremerie||1;
+Emmental râpé|fromage|sachet|1;Comté|fromage|g|250;Camembert|fromage||1;Mozzarella|fromage||2;Parmesan|fromage|g|100;Chèvre|fromage||1;Raclette|fromage|g|800;Feta|fromage||1;
+Poulet (filets)|viande|g|500;Poulet entier|viande||1;Steaks hachés|viande|paquet|1;Viande hachée|viande|g|500;Rôti de porc|viande|kg|1;Côtes de porc|viande||4;Bœuf bourguignon|viande|kg|1;Escalopes de dinde|viande||4;Saucisses|viande|paquet|1;Merguez|viande|paquet|1;
+Saumon|poisson|g|400;Cabillaud|poisson|g|400;Crevettes|poisson|g|300;Moules|poisson|kg|1;
+Jambon|traiteur|tranche|4;Lardons|traiteur|barquette|1;Chorizo|traiteur||1;Saucisson|traiteur||1;Blanc de poulet|traiteur|tranche|4;Surimi|traiteur|paquet|1;Taboulé|traiteur|barquette|1;
+Légumes surgelés|surgeles|sachet|1;Frites surgelées|surgeles|sachet|1;Poisson pané|surgeles|boîte|1;Pizza surgelée|surgeles||1;Glace|surgeles|boîte|1;Épinards surgelés|surgeles|sachet|1;
+Pâtes|epicerie|paquet|1;Spaghetti|epicerie|paquet|1;Riz|epicerie|kg|1;Semoule|epicerie|paquet|1;Lentilles|epicerie|paquet|1;Farine|epicerie|kg|1;Huile d'olive|epicerie|bouteille|1;Huile de tournesol|epicerie|bouteille|1;Vinaigre|epicerie|bouteille|1;Sel|epicerie|paquet|1;Poivre|epicerie||1;Bouillon cube|epicerie|boîte|1;Chips|epicerie|paquet|1;Gâteaux apéritif|epicerie|paquet|1;Herbes de Provence|epicerie|pot|1;Curry|epicerie|pot|1;
+Tomates pelées|conserves|boîte|2;Concentré de tomate|conserves|boîte|1;Sauce tomate|conserves|pot|1;Thon|conserves|boîte|2;Maïs|conserves|boîte|1;Haricots rouges|conserves|boîte|1;Pois chiches|conserves|boîte|1;Lait de coco|conserves|boîte|1;Moutarde|conserves|pot|1;Mayonnaise|conserves|pot|1;Ketchup|conserves|bouteille|1;Cornichons|conserves|pot|1;Olives|conserves|pot|1;
+Sucre|sucre|kg|1;Chocolat noir|sucre||2;Chocolat au lait|sucre||2;Biscuits|sucre|paquet|1;Compote|sucre|paquet|1;Levure chimique|sucre|sachet|2;Sucre vanillé|sucre|sachet|2;Bonbons|sucre|paquet|1;Miel|sucre|pot|1;Confiture|sucre|pot|1;Pâte à tartiner|sucre|pot|1;
+Céréales|petitdej|paquet|1;Café|petitdej|paquet|1;Café en dosettes|petitdej|boîte|1;Thé|petitdej|boîte|1;Chocolat en poudre|petitdej|boîte|1;Biscottes|petitdej|paquet|1;Jus d'orange|petitdej|brique|1;
+Eau plate|boissons|bouteille|6;Eau gazeuse|boissons|bouteille|6;Soda|boissons|bouteille|1;Sirop|boissons|bouteille|1;Bière|boissons|pack|1;Vin rouge|boissons|bouteille|1;Vin blanc|boissons|bouteille|1;
+Papier toilette|hygiene|paquet|1;Mouchoirs|hygiene|boîte|1;Dentifrice|hygiene||1;Brosses à dents|hygiene||2;Gel douche|hygiene||1;Shampoing|hygiene||1;Déodorant|hygiene||1;Coton|hygiene|paquet|1;Rasoirs|hygiene|paquet|1;
+Liquide vaisselle|maison|bouteille|1;Tablettes lave-vaisselle|maison|boîte|1;Lessive|maison||1;Adoucissant|maison|bouteille|1;Éponges|maison|paquet|1;Essuie-tout|maison|paquet|1;Sacs poubelle|maison|rouleau|1;Papier aluminium|maison|rouleau|1;Film alimentaire|maison|rouleau|1;Nettoyant multi-usage|maison|bouteille|1;Piles|maison|paquet|1;Ampoules|maison||1;
+Couches|bebe|paquet|1;Lingettes|bebe|paquet|1;Petits pots|bebe||4;
+Croquettes|animaux|sachet|1;Pâtée|animaux|boîte|4;Litière|animaux|sachet|1`
+  .split(";").map(l => l.trim()).filter(Boolean).map(l => { const [name, rayon, unit, qty] = l.split("|"); return {name, rayon, unit: unit === "pack" ? "paquet" : unit, qty: Number(qty) || 1}; });
+// Plats d'exemple (proposés une fois, modifiables ensuite) : « ingrédient:quantité:unité:rayon »
+const SAMPLE_DISHES = [
+  ["Pâtes bolognaise", 4, "Spaghetti:500:g:epicerie,Viande hachée:400:g:viande,Tomates pelées:2:boîte:conserves,Oignons:1::fruits,Carottes:2::fruits,Ail:1::fruits,Parmesan:60:g:fromage,Huile d'olive:1:bouteille:epicerie"],
+  ["Quiche lorraine", 4, "Pâte brisée:1::cremerie,Lardons:200:g:traiteur,Œufs:3::cremerie,Crème fraîche:20:cl:cremerie,Lait:20:cl:cremerie,Emmental râpé:100:g:fromage"],
+  ["Crêpes", 4, "Farine:250:g:epicerie,Œufs:4::cremerie,Lait:50:cl:cremerie,Beurre:50:g:cremerie,Sucre vanillé:1:sachet:sucre"],
+  ["Poulet rôti et pommes de terre", 4, "Poulet entier:1::viande,Pommes de terre:1:kg:fruits,Ail:1::fruits,Herbes de Provence:1:pot:epicerie,Beurre:30:g:cremerie"],
+  ["Salade niçoise", 4, "Salade:1::fruits,Tomates:4::fruits,Œufs:4::cremerie,Thon:2:boîte:conserves,Haricots verts:300:g:fruits,Olives:1:pot:conserves,Poivrons:1::fruits"],
+  ["Hachis parmentier", 4, "Pommes de terre:1:kg:fruits,Viande hachée:500:g:viande,Oignons:2::fruits,Lait:20:cl:cremerie,Beurre:50:g:cremerie,Emmental râpé:80:g:fromage"],
+  ["Curry de poulet", 4, "Poulet (filets):600:g:viande,Lait de coco:1:boîte:conserves,Oignons:1::fruits,Curry:1:pot:epicerie,Riz:300:g:epicerie,Gingembre:20:g:fruits"],
+  ["Gratin dauphinois", 4, "Pommes de terre:1:kg:fruits,Crème liquide:40:cl:cremerie,Lait:30:cl:cremerie,Ail:1::fruits,Beurre:20:g:cremerie"],
+].map(([name, parts, ing]) => ({name, parts, ingredients: ing.split(",").map(s => { const [n, q, u, r] = s.split(":"); return {name: n, qty: Number(q) || 1, unit: u || "", rayon: r}; })}));
+
+const shopOrder = () => { const o = state.settings.shop?.order || []; return [...o.filter(k => RAYON[k]), ...RAYONS.map(r => r[0]).filter(k => !o.includes(k))]; };
+// Ordre des plats : alphabétique (par défaut) ou personnalisé (commun aux deux profils)
+const dishSortMode = () => state.settings.shop?.dishSort === "custom" ? "custom" : "alpha";
+function sortedDishes(){
+  const alpha = state.dishes.slice().sort((a, b) => (a.name || "").localeCompare(b.name || "", "fr"));
+  if (dishSortMode() !== "custom") return alpha;
+  const o = state.settings.shop?.dishOrder || [];
+  const pos = id => { const i = o.indexOf(id); return i < 0 ? 1e6 : i; };
+  return alpha.sort((a, b) => pos(a.id) - pos(b.id)); // les nouveaux plats vont à la fin, par ordre alphabétique
+}
+function saveShopSettings(patch){ const next = {...(state.settings.shop || {}), ...patch}; state.settings.shop = next; guard(rawSave("settings", "shop", next)); }
+const shopKey = (name, unit) => norm(name) + "|" + (unit || "");
+// Articles connus : catalogue + articles créés (les créés priment)
+// products : articles créés, ou retouches du catalogue (base = nom d'origine ; hidden = article retiré)
+function knownProducts(){
+  const m = new Map(CATALOG.map(p => [norm(p.name), {...p, builtin: true}]));
+  for (const p of state.products) if (p.base) m.delete(norm(p.base));
+  for (const p of state.products) {
+    if (p.hidden) { m.delete(norm(p.name)); continue; }
+    m.set(norm(p.name), {name: p.name, rayon: RAYON[p.rayon] ? p.rayon : "autre", unit: p.unit || "", qty: Number(p.qty) || 1, id: p.id, base: p.base || "", builtin: !!p.base});
+  }
+  return [...m.values()].sort((a, b) => a.name.localeCompare(b.name, "fr"));
+}
+const guessProduct = name => knownProducts().find(p => norm(p.name) === norm(name)) || knownProducts().find(p => norm(name).length > 2 && norm(p.name).startsWith(norm(name)));
+const rayonOptions = cur => shopOrder().map(k => `<option value="${k}" ${k === cur ? "selected" : ""}>${RAYON[k]}</option>`).join("");
+const unitOptions = cur => UNITS.map(u => `<option value="${u}" ${u === (cur || "") ? "selected" : ""}>${u || "nombre"}</option>`).join("");
+const activeLists = () => state.shoplists.filter(l => !l.archived).sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || ""));
+function currentList(){
+  const id = state.shopCur || store.get("cc-shoplist");
+  return state.shoplists.find(l => l.id === id) || activeLists()[0] || null;
+}
+const itemsOf = listId => state.shopitems.filter(i => i.listId === listId);
+
+function renderShop(){
+  const host = $("#shopBody"); if (!host) return;
+  const L = currentList();
+  const lists = activeLists(), old = state.shoplists.filter(l => l.archived).sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || ""));
+  if (!L) {
+    host.innerHTML = `<div class="empty">Aucune liste de courses pour l'instant.</div>
+      <button class="btn wide" id="shopNew">+ Créer une liste de courses</button>
+      <button class="btn ghost wide" id="shopDishes">Mes plats (${state.dishes.length})</button>
+      <button class="btn ghost wide" id="shopProducts">Mes articles (${knownProducts().length})</button>`;
+    return;
+  }
+  const items = itemsOf(L.id), inCart = items.filter(i => i.checked).length, hide = store.get("cc-shop-hide") === "1";
+  const order = shopOrder();
+  const groups = order.map(k => [k, items.filter(i => (RAYON[i.rayon] ? i.rayon : "autre") === k)]).filter(([, g]) => g.length);
+  host.innerHTML = `
+    <div class="row" style="flex-wrap:nowrap">
+      <select id="shopListSel" aria-label="Liste de courses" style="flex:1;min-width:0">
+        ${lists.map(l => `<option value="${esc(l.id)}" ${l.id === L.id ? "selected" : ""}>${esc(l.title || "Liste")}</option>`).join("")}
+        ${old.length ? `<optgroup label="Listes terminées">${old.map(l => `<option value="${esc(l.id)}" ${l.id === L.id ? "selected" : ""}>${esc(l.title || "Liste")}</option>`).join("")}</optgroup>` : ""}
+      </select>
+      <button class="btn ghost add" id="shopNew" aria-label="Nouvelle liste">+ Liste</button>
+    </div>
+    ${L.archived ? `<p class="note">Liste terminée. <button class="linklike" id="shopReopen">La rouvrir</button></p>` : ""}
+    <button class="btn wide" id="shopAdd">+ Ajouter des articles ou des plats</button>
+    <form id="shopQuick" class="row" style="flex-wrap:nowrap" autocomplete="off">
+      <input type="text" id="shopQuickName" placeholder="Ajout rapide (ex. lait)" aria-label="Ajout rapide d'un article" list="shopKnown" style="flex:1;min-width:0">
+      <datalist id="shopKnown">${knownProducts().map(p => `<option value="${esc(p.name)}">`).join("")}</datalist>
+      <button class="btn add">Ajouter</button>
+    </form>
+    ${items.length ? `<div class="shop-sum"><span><b>${inCart}</b> / ${items.length} dans le caddie</span>
+      <label class="switch small"><input type="checkbox" id="shopHide" ${hide ? "checked" : ""}>Masquer le caddie</label></div>
+    <div class="progress" aria-hidden="true"><i style="width:${items.length ? Math.round(inCart / items.length * 100) : 0}%"></i></div>` : `<div class="empty">Liste vide. Touchez « + Ajouter des articles ou des plats ».</div>`}
+    <div class="stack" style="gap:12px">${groups.map(([k, g]) => {
+      const sorted = g.slice().sort((a, b) => (a.checked - b.checked) || (a.name || "").localeCompare(b.name || ""));
+      const shown = hide ? sorted.filter(i => !i.checked) : sorted, left = g.filter(i => !i.checked).length;
+      if (!shown.length) return "";
+      return `<div class="shop-group"><div class="group-title shop-ray"><span>${esc(RAYON[k])}</span><span>${left ? left + " à prendre" : "tout est pris"}</span></div>
+        ${shown.map(i => `<div class="shop-item ${i.checked ? "in" : ""}">
+          <button class="shop-chk" data-shopchk="${esc(i.id)}" aria-pressed="${!!i.checked}" aria-label="${i.checked ? "Retirer du caddie" : "Mettre dans le caddie"} : ${esc(i.name)}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></button>
+          <button class="shop-name linklike" data-shopitem="${esc(i.id)}"><b>${esc(i.name)}</b>${i.dishes?.length ? `<span class="m">pour ${esc(i.dishes.join(", "))}</span>` : ""}${i.note ? `<span class="m">${esc(i.note)}</span>` : ""}</button>
+          <span class="shop-qty">${esc(qtyText(i.qty, i.unit))}</span></div>`).join("")}</div>`; }).join("")}</div>
+    ${hide && inCart ? `<p class="note">${inCart} article${inCart > 1 ? "s" : ""} déjà dans le caddie (masqué${inCart > 1 ? "s" : ""}).</p>` : ""}
+    <div class="shop-actions">
+      ${inCart ? `<button class="btn ghost" id="shopUncheck">Tout décocher</button><button class="btn ghost" id="shopClearCart">Retirer ce qui est dans le caddie</button>` : ""}
+      <button class="btn ghost" id="shopDishes">Mes plats (${state.dishes.length})</button>
+      <button class="btn ghost" id="shopProducts">Mes articles (${knownProducts().length})</button>
+      <button class="btn ghost" id="shopOrder">Ordre des rayons</button>
+      <button class="btn ghost" id="shopListEdit">Renommer / terminer la liste</button>
+    </div>`;
+}
+function setShopCur(id){ state.shopCur = id; store.set("cc-shoplist", id); renderShop(); }
+
+/* ---------- courses : écritures groupées (un seul retour en arrière) ---------- */
+async function shopBulk(label, writes){
+  // writes = [{col, id, next}] (next null = suppression) ; on garde l'état d'avant pour le retour en arrière
+  const ops = writes.map(w => ({...w, prev: prevOf(w.col, w.id)}));
+  const apply = async which => { for (const o of ops) { const v = o[which]; if (v) await rawSave(o.col, o.id, v); else await rawRemove(o.col, o.id); } };
+  await apply("next");
+  pushUndo({label, custom: () => apply("prev"), redo: () => apply("next")});
+}
+function newList(title){
+  const id = "L" + newId(), d = new Date();
+  const data = {title: title || "Courses du " + d.toLocaleDateString("fr-FR", {weekday: "long", day: "numeric", month: "long"}), createdAt: d.toISOString(), by: state.me || "", archived: false};
+  guard(save("shoplists", id, data)); setShopCur(id); return id;
+}
+// Ajoute des articles à une liste : même nom et même unité → quantités additionnées
+function addToList(listId, entries, label){
+  const existing = itemsOf(listId).filter(i => !i.checked), writes = [], pending = new Map();
+  for (const e of entries) {
+    const k = shopKey(e.name, e.unit), ex = pending.get(k) || existing.find(i => shopKey(i.name, i.unit) === k);
+    if (ex) {
+      const next = {...(ex.next || prevOf("shopitems", ex.id)), qty: Math.round(((Number((ex.next || ex).qty) || 0) + (Number(e.qty) || 0)) * 100) / 100};
+      next.dishes = [...new Set([...(next.dishes || []), ...(e.dishes || [])])];
+      const w = {col: "shopitems", id: ex.id, next}; pending.set(k, w);
+      const i = writes.findIndex(x => x.id === ex.id); if (i >= 0) writes[i] = w; else writes.push(w);
+    } else {
+      const id = "i" + newId() + writes.length;
+      const w = {col: "shopitems", id, next: {listId, name: e.name.trim(), qty: Number(e.qty) || 1, unit: e.unit || "", rayon: RAYON[e.rayon] ? e.rayon : "autre", checked: false, dishes: e.dishes || [], by: state.me || "", at: new Date().toISOString()}};
+      pending.set(k, w); writes.push(w);
+    }
+  }
+  if (!writes.length) return;
+  guard(shopBulk(label || `ajout de ${entries.length} article${entries.length > 1 ? "s" : ""}`, writes));
+}
+
+/* ---------- courses : choix des articles et des plats ---------- */
+const shopPick = {tab: "items", q: "", sel: new Map(), dishes: new Map()};
+function pickerCount(){
+  let n = shopPick.sel.size;
+  for (const d of shopPick.dishes.values()) n += d.ings.filter(x => x.on).length;
+  return n;
+}
+function shopPicker(){
+  openSheet(`<div class="eyebrow">Ajouter à la liste</div>
+    <div class="seg" role="group" aria-label="Ajouter"><button data-ptab="items" aria-pressed="${shopPick.tab === "items"}">Articles</button><button data-ptab="dishes" aria-pressed="${shopPick.tab === "dishes"}">Plats</button></div>
+    <div id="pickBody" class="stack" style="gap:10px"></div>
+    <div class="pick-foot"><button type="button" class="btn ghost" data-close>Fermer</button><button type="button" class="btn" id="pickAdd"></button></div>`, sh => {
+    const body = sh.querySelector("#pickBody");
+    const foot = () => { const n = pickerCount(), b = sh.querySelector("#pickAdd"); b.textContent = n ? `Ajouter à la liste (${n})` : "Ajouter à la liste"; b.disabled = !n; };
+    const draw = () => {
+      sh.querySelectorAll("[data-ptab]").forEach(b => b.setAttribute("aria-pressed", b.dataset.ptab === shopPick.tab));
+      if (shopPick.tab === "items") drawItems(); else drawDishes();
+      foot();
+    };
+    const drawItems = () => {
+      const q = norm(shopPick.q), all = knownProducts();
+      const found = q ? all.filter(p => norm(p.name).includes(q)) : all;
+      const exact = q && all.some(p => norm(p.name) === q);
+      const order = shopOrder();
+      const selected = [...shopPick.sel.values()];
+      body.innerHTML = `<input type="search" id="pickQ" placeholder="Chercher ou créer un article" value="${esc(shopPick.q)}" aria-label="Chercher un article" autocomplete="off">
+        ${selected.length ? `<div class="group-title">Choisis (${selected.length})</div>${selected.map(rowSel).join("")}` : ""}
+        ${q && !exact ? `<div class="pick-new"><b>Nouvel article : « ${esc(shopPick.q.trim())} »</b>
+          <div class="row" style="flex-wrap:nowrap"><select id="pickNewRay" aria-label="Rayon" style="flex:1;min-width:0">${rayonOptions("autre")}</select><button type="button" class="btn add" id="pickNewAdd">Ajouter</button></div>
+          <span class="note">Il sera retenu pour les prochaines listes.</span></div>` : ""}
+        ${order.map(k => { const g = found.filter(p => p.rayon === k && !shopPick.sel.has(shopKey(p.name, p.unit))); return g.length ? `<div class="group-title">${RAYON[k]}</div><div class="pick-grid">${g.map(p => `<button type="button" class="pick-prod" data-prod="${esc(p.name)}">${esc(p.name)}</button>`).join("")}</div>` : ""; }).join("")}
+        ${!found.length && !q ? `<div class="empty">Aucun article.</div>` : ""}
+        <button type="button" class="btn ghost wide" id="pickManage">Modifier la liste des articles</button>`;
+      const qi = body.querySelector("#pickQ");
+      qi.addEventListener("input", () => { shopPick.q = qi.value; const pos = qi.selectionStart; drawItems(); foot(); const n = body.querySelector("#pickQ"); n.focus(); n.setSelectionRange(pos, pos); });
+      body.querySelector("#pickNewAdd")?.addEventListener("click", () => {
+        const name = shopPick.q.trim(), rayon = body.querySelector("#pickNewRay").value;
+        guard(rawSave("products", "p" + newId(), {name, rayon, unit: "", qty: 1}));
+        shopPick.sel.set(shopKey(name, ""), {name, rayon, unit: "", qty: 1}); shopPick.q = ""; drawItems(); foot();
+      });
+    };
+    const rowSel = e => `<div class="pick-row sel" data-selkey="${esc(shopKey(e.name, e.unit))}">
+      <div class="top"><span class="t"><b>${esc(e.name)}</b><span class="m">${esc(RAYON[e.rayon] || "Autre")}</span></span><button type="button" class="mv" data-unsel aria-label="Retirer ${esc(e.name)}">×</button></div>
+      <div class="qty"><button type="button" class="mv" data-qd="-1" aria-label="Moins">−</button><input type="number" class="qin" min="0" step="any" value="${e.qty}" aria-label="Quantité de ${esc(e.name)}"><button type="button" class="mv" data-qd="1" aria-label="Plus">+</button>
+      <select class="uin" aria-label="Unité">${unitOptions(e.unit)}</select></div></div>`;
+    const drawDishes = () => {
+      const ds = sortedDishes(), custom = dishSortMode() === "custom";
+      body.innerHTML = `${ds.length > 1 ? `<div class="row" style="flex-wrap:nowrap;justify-content:space-between"><span class="note">Ordre des plats</span>
+        <div class="seg" role="group" aria-label="Ordre des plats" style="flex:none;width:210px"><button type="button" data-dsort="alpha" aria-pressed="${!custom}">A → Z</button><button type="button" data-dsort="custom" aria-pressed="${custom}">Personnalisé</button></div></div>` : ""}
+        ${ds.length ? "" : `<div class="empty">Aucun plat enregistré.</div><button type="button" class="btn ghost wide" id="pickSamples">Ajouter ${SAMPLE_DISHES.length} plats d'exemple (modifiables)</button>`}
+        ${ds.map(d => { const s = shopPick.dishes.get(d.id); return `<div class="dish ${s ? "on" : ""}">
+          <div class="dish-head"><button type="button" class="dish-pick" data-dish="${esc(d.id)}" aria-pressed="${!!s}"><b>${esc(d.name)}</b><span class="m">${(d.ingredients || []).length} ingrédient${(d.ingredients || []).length > 1 ? "s" : ""} · pour ${d.parts || 4}</span></button>
+          ${custom ? `<button type="button" class="mv" data-dmv="${esc(d.id)}" data-dir="-1" aria-label="Monter ${esc(d.name)}" ${ds[0] === d ? "disabled" : ""}>↑</button><button type="button" class="mv" data-dmv="${esc(d.id)}" data-dir="1" aria-label="Descendre ${esc(d.name)}" ${ds[ds.length - 1] === d ? "disabled" : ""}>↓</button>` : ""}
+          <button type="button" class="edit" data-dishedit="${esc(d.id)}">Modifier</button></div>
+          ${s ? `<div class="dish-parts"><span>Pour</span><button type="button" class="mv" data-pd="-1" data-d="${esc(d.id)}">−</button><b>${s.parts}</b><button type="button" class="mv" data-pd="1" data-d="${esc(d.id)}">+</button><span>personne${s.parts > 1 ? "s" : ""}</span></div>
+            <p class="note">Décochez ce que vous avez déjà ; les quantités se modifient.</p>
+            ${s.ings.map((x, k) => `<div class="pick-row ing ${x.on ? "" : "off"}" data-d="${esc(d.id)}" data-k="${k}"><input type="checkbox" class="ion" ${x.on ? "checked" : ""} aria-label="Prendre ${esc(x.name)}"><span class="t"><b>${esc(x.name)}</b><span class="m">${esc(RAYON[x.rayon] || "Autre")}</span></span>
+              <input type="number" class="qin" min="0" step="any" value="${x.qty}" aria-label="Quantité de ${esc(x.name)}"><select class="uin" aria-label="Unité">${unitOptions(x.unit)}</select></div>`).join("")}` : ""}
+        </div>`; }).join("")}
+        <button type="button" class="btn ghost wide" id="pickNewDish">+ Nouveau plat</button>`;
+      body.querySelector("#pickSamples")?.addEventListener("click", () => { guard(shopBulk(`ajout de ${SAMPLE_DISHES.length} plats d'exemple`, SAMPLE_DISHES.map(d => ({col: "dishes", id: "d" + newId() + d.name.length, next: d})))); setTimeout(draw, 80); });
+    };
+    // Quantités pour le nombre de personnes : les choses qui se comptent sont arrondies au-dessus (pas de demi-œuf)
+    const scale = (d, parts) => (d.ingredients || []).map(x => { const raw = (Number(x.qty) || 0) * parts / (d.parts || 4);
+      const qty = UNIT_FIXED.includes(x.unit) ? (["g", "ml"].includes(x.unit) ? Math.ceil(raw / 10) * 10 : Math.round(raw * 100) / 100) : Math.ceil(raw - 1e-9);
+      return {...x, on: true, qty}; });
+    body.addEventListener("click", e => {
+      const t = e.target;
+      const p = t.closest("[data-prod]"); if (p) { const prod = knownProducts().find(x => x.name === p.dataset.prod); if (prod) shopPick.sel.set(shopKey(prod.name, prod.unit), {...prod}); drawItems(); foot(); return; }
+      const row = t.closest(".pick-row");
+      const dp = t.closest("[data-dish]"); if (dp) { const d = state.dishes.find(x => x.id === dp.dataset.dish); if (!d) return;
+        if (shopPick.dishes.has(d.id)) shopPick.dishes.delete(d.id); else shopPick.dishes.set(d.id, {parts: d.parts || 4, ings: scale(d, d.parts || 4)}); drawDishes(); foot(); return; }
+      const pd = t.closest("[data-pd]"); if (pd) { const d = state.dishes.find(x => x.id === pd.dataset.d), s = shopPick.dishes.get(pd.dataset.d); if (!d || !s) return;
+        s.parts = Math.max(1, s.parts + Number(pd.dataset.pd)); const fresh = scale(d, s.parts); s.ings = fresh.map((x, k) => ({...x, on: s.ings[k]?.on !== false})); drawDishes(); foot(); return; }
+      const ds2 = t.closest("[data-dsort]"); if (ds2) {
+        const mode = ds2.dataset.dsort, cur = sortedDishes().map(x => x.id);
+        saveShopSettings(mode === "custom" ? {dishSort: "custom", dishOrder: state.settings.shop?.dishOrder?.length ? state.settings.shop.dishOrder : cur} : {dishSort: "alpha"});
+        drawDishes(); return; }
+      const mvb = t.closest("[data-dmv]"); if (mvb) {
+        const ids = sortedDishes().map(x => x.id), i = ids.indexOf(mvb.dataset.dmv), j = i + Number(mvb.dataset.dir);
+        if (i < 0 || j < 0 || j >= ids.length) return;
+        [ids[i], ids[j]] = [ids[j], ids[i]]; saveShopSettings({dishSort: "custom", dishOrder: ids}); drawDishes(); return; }
+      const de = t.closest("[data-dishedit]"); if (de) { dishSheet(state.dishes.find(x => x.id === de.dataset.dishedit)); return; }
+      if (t.closest("#pickNewDish")) { dishSheet(null); return; }
+      if (t.closest("#pickManage")) { productsSheet(true); return; }
+      if (row && row.dataset.selkey) {
+        const e2 = shopPick.sel.get(row.dataset.selkey); if (!e2) return;
+        if (t.closest("[data-unsel]")) { shopPick.sel.delete(row.dataset.selkey); drawItems(); foot(); return; }
+        const qd = t.closest("[data-qd]"); if (qd) { const step = UNIT_FIXED.includes(e2.unit) ? (e2.unit === "g" || e2.unit === "ml" ? 100 : e2.unit === "cl" ? 10 : 0.5) : 1;
+          e2.qty = Math.max(0, Math.round(((Number(e2.qty) || 0) + step * Number(qd.dataset.qd)) * 100) / 100); row.querySelector(".qin").value = e2.qty; }
+      }
+    });
+    body.addEventListener("change", e => {
+      const row = e.target.closest(".pick-row"); if (!row) return;
+      const target = row.dataset.selkey ? shopPick.sel.get(row.dataset.selkey) : shopPick.dishes.get(row.dataset.d)?.ings[Number(row.dataset.k)];
+      if (!target) return;
+      if (e.target.classList.contains("qin")) target.qty = Math.max(0, Number(e.target.value) || 0);
+      if (e.target.classList.contains("uin")) target.unit = e.target.value;
+      if (e.target.classList.contains("ion")) { target.on = e.target.checked; row.classList.toggle("off", !target.on); foot(); }
+    });
+    sh.querySelectorAll("[data-ptab]").forEach(b => b.addEventListener("click", () => { shopPick.tab = b.dataset.ptab; draw(); }));
+    sh.querySelector("#pickAdd").addEventListener("click", () => {
+      const entries = [...shopPick.sel.values()].filter(x => Number(x.qty) > 0).map(x => ({...x}));
+      for (const [id, s] of shopPick.dishes) { const d = state.dishes.find(x => x.id === id); if (!d) continue;
+        for (const x of s.ings) if (x.on && Number(x.qty) > 0) entries.push({name: x.name, qty: x.qty, unit: x.unit, rayon: x.rayon, dishes: [d.name]}); }
+      if (!entries.length) return;
+      const L = currentList() || {id: newList()};
+      addToList(L.id, entries, `ajout de ${entries.length} article${entries.length > 1 ? "s" : ""} à la liste`);
+      const nd = shopPick.dishes.size;
+      shopPick.sel.clear(); shopPick.dishes.clear(); shopPick.q = "";
+      closeSheet(); toast(`${entries.length} article${entries.length > 1 ? "s" : ""} ajouté${entries.length > 1 ? "s" : ""}${nd ? ` (dont ${nd} plat${nd > 1 ? "s" : ""})` : ""}`);
+    });
+    draw();
+  });
+}
+
+/* ---------- courses : plats ---------- */
+function dishSheet(d){
+  const isNew = !d, ings = (d?.ingredients || []).map(x => ({...x}));
+  if (!ings.length) ings.push({name: "", qty: 1, unit: "", rayon: "autre"});
+  openSheet(`<div class="eyebrow">${isNew ? "Nouveau plat" : "Modifier le plat"}</div>
+    <form id="dishForm" class="stack" autocomplete="off">
+      <div class="field"><label for="dishName">Nom du plat</label><input type="text" id="dishName" value="${esc(d?.name || "")}" placeholder="Ex. Lasagnes"></div>
+      <div class="field"><label for="dishParts">Pour combien de personnes ?</label><input type="number" id="dishParts" min="1" max="50" value="${d?.parts || 4}"></div>
+      <div class="field"><span class="lbl">Ingrédients <span style="font-weight:400">(pour ce nombre de personnes)</span></span><div id="ingRows" class="stack" style="gap:8px"></div>
+        <datalist id="ingKnown">${knownProducts().map(p => `<option value="${esc(p.name)}">`).join("")}</datalist>
+        <button type="button" class="btn ghost" id="ingAdd">+ Ingrédient</button></div>
+      <div class="row" style="justify-content:space-between">
+        ${isNew ? "<span></span>" : `<button type="button" class="btn danger" id="dishDel">Supprimer</button>`}
+        <div class="row"><button type="button" class="btn ghost" id="dishBack">Retour</button><button class="btn">${isNew ? "Créer" : "Enregistrer"}</button></div>
+      </div>
+    </form>`, sh => {
+    const box = sh.querySelector("#ingRows");
+    const draw = () => { box.innerHTML = ings.map((x, k) => `<div class="ing-edit" data-k="${k}">
+      <input type="text" class="in-name" list="ingKnown" value="${esc(x.name)}" placeholder="Ingrédient" aria-label="Ingrédient ${k + 1}">
+      <div class="row" style="flex-wrap:nowrap"><input type="number" class="in-qty" min="0" step="any" value="${x.qty}" aria-label="Quantité" style="width:80px;flex:none">
+        <select class="in-unit" aria-label="Unité" style="flex:1;min-width:0">${unitOptions(x.unit)}</select>
+        <select class="in-ray" aria-label="Rayon" style="flex:1.4;min-width:0">${rayonOptions(x.rayon)}</select>
+        <button type="button" class="mv" data-ingdel="${k}" aria-label="Retirer l'ingrédient">×</button></div></div>`).join(""); };
+    draw();
+    box.addEventListener("change", e => {
+      const r = e.target.closest(".ing-edit"); if (!r) return; const x = ings[Number(r.dataset.k)];
+      if (e.target.classList.contains("in-name")) { x.name = e.target.value; const g = guessProduct(x.name);
+        if (g) { x.rayon = g.rayon; if (!x.unit && g.unit) x.unit = g.unit; r.querySelector(".in-ray").value = x.rayon; r.querySelector(".in-unit").value = x.unit; } }
+      if (e.target.classList.contains("in-qty")) x.qty = Number(e.target.value) || 0;
+      if (e.target.classList.contains("in-unit")) x.unit = e.target.value;
+      if (e.target.classList.contains("in-ray")) x.rayon = e.target.value;
+    });
+    box.addEventListener("click", e => { const b = e.target.closest("[data-ingdel]"); if (b) { ings.splice(Number(b.dataset.ingdel), 1); draw(); } });
+    sh.querySelector("#ingAdd").addEventListener("click", () => { ings.push({name: "", qty: 1, unit: "", rayon: "autre"}); draw(); box.querySelector(".ing-edit:last-child .in-name").focus(); });
+    sh.querySelector("#dishBack").addEventListener("click", () => shopPicker());
+    sh.querySelector("#dishForm").addEventListener("submit", e => {
+      e.preventDefault();
+      box.querySelectorAll(".ing-edit").forEach(r => { const x = ings[Number(r.dataset.k)]; x.name = r.querySelector(".in-name").value; x.qty = Number(r.querySelector(".in-qty").value) || 0; });
+      const name = sh.querySelector("#dishName").value.trim(), parts = Math.max(1, Math.round(Number(sh.querySelector("#dishParts").value) || 4));
+      const ingredients = ings.filter(x => x.name.trim()).map(x => ({name: x.name.trim(), qty: x.qty, unit: x.unit || "", rayon: RAYON[x.rayon] ? x.rayon : "autre"}));
+      if (!name) { toast("Indiquez le nom du plat."); return; }
+      if (!ingredients.length) { toast("Ajoutez au moins un ingrédient."); return; }
+      guard(isNew ? save("dishes", "d" + newId(), {name, parts, ingredients}) : save("dishes", d.id, {name, parts, ingredients}));
+      shopPick.tab = "dishes"; if (d) shopPick.dishes.delete(d.id);
+      toast(isNew ? "Plat créé" : "Plat enregistré"); setTimeout(shopPicker, 60);
+    });
+    armDelete(sh.querySelector("#dishDel"), "Confirmer la suppression", () => { guard(remove("dishes", d.id)); shopPick.dishes.delete(d.id); toast("Plat supprimé"); setTimeout(shopPicker, 60); });
+  });
+}
+
+/* ---------- courses : la liste des articles (catalogue) ---------- */
+let productsQ = "", productsFromPicker = false;
+function productsSheet(fromPicker){
+  if (fromPicker !== undefined) productsFromPicker = !!fromPicker;
+  const retouched = state.products.filter(p => p.base).length;
+  openSheet(`<div class="eyebrow">Mes articles</div>
+    <p class="note">Les articles proposés quand vous ajoutez à une liste. Touchez-en un pour le modifier ou le supprimer. Liste commune aux deux profils.</p>
+    <div class="row" style="flex-wrap:nowrap"><input type="search" id="prodQ" placeholder="Chercher un article" value="${esc(productsQ)}" aria-label="Chercher un article" autocomplete="off" style="flex:1;min-width:0"><button type="button" class="btn add" id="prodNew">+ Nouvel article</button></div>
+    <div id="prodList" class="stack" style="gap:10px"></div>
+    ${retouched ? `<button type="button" class="btn ghost wide" id="prodReset">Remettre le catalogue d'origine (${retouched} retouche${retouched > 1 ? "s" : ""})</button>` : ""}
+    <div class="row" style="justify-content:flex-end"><button type="button" class="btn" id="prodClose">${productsFromPicker ? "Retour" : "Fermer"}</button></div>`, sh => {
+    const list = sh.querySelector("#prodList");
+    const draw = () => {
+      const q = norm(productsQ), all = knownProducts().filter(p => !q || norm(p.name).includes(q));
+      list.innerHTML = shopOrder().map(k => { const g = all.filter(p => p.rayon === k); return g.length ? `<div class="group-title">${RAYON[k]} (${g.length})</div><div class="pick-grid">${g.map(p => `<button type="button" class="pick-prod" data-editprod="${esc(p.name)}" title="${esc(qtyText(p.qty, p.unit))}">${esc(p.name)}</button>`).join("")}</div>` : ""; }).join("")
+        || `<div class="empty">Aucun article ne correspond.</div>`;
+    };
+    draw();
+    const qi = sh.querySelector("#prodQ");
+    qi.addEventListener("input", () => { productsQ = qi.value; draw(); });
+    list.addEventListener("click", e => { const b = e.target.closest("[data-editprod]"); if (b) productSheet(knownProducts().find(p => p.name === b.dataset.editprod)); });
+    sh.querySelector("#prodNew").addEventListener("click", () => productSheet(null, productsQ.trim()));
+    sh.querySelector("#prodClose").addEventListener("click", () => { if (productsFromPicker) shopPicker(); else closeSheet(); });
+    sh.querySelector("#prodReset")?.addEventListener("click", e => {
+      const b = e.currentTarget; if (!b.dataset.armed) { b.dataset.armed = "1"; b.textContent = "Confirmer : annuler toutes les retouches du catalogue"; return; }
+      guard(shopBulk("retour au catalogue d'origine", state.products.filter(p => p.base).map(p => ({col: "products", id: p.id, next: null}))));
+      toast("Catalogue d'origine rétabli"); setTimeout(() => productsSheet(), 60);
+    });
+  });
+}
+function productSheet(p, newName){
+  const isNew = !p;
+  openSheet(`<div class="eyebrow">${isNew ? "Nouvel article" : "Modifier l'article"}</div>
+    <form id="prodForm" class="stack" autocomplete="off">
+      <div class="field"><label for="prName">Nom</label><input type="text" id="prName" value="${esc(p?.name || newName || "")}" placeholder="Ex. Lait d'avoine"></div>
+      <div class="field"><label for="prRay">Rayon</label><select id="prRay">${rayonOptions(p?.rayon || "autre")}</select></div>
+      <div class="row" style="flex-wrap:nowrap">
+        <div class="field" style="flex:1;min-width:0"><label for="prQty">Quantité proposée</label><input type="number" id="prQty" min="0" step="any" value="${p?.qty || 1}"></div>
+        <div class="field" style="flex:1.3;min-width:0"><label for="prUnit">Unité</label><select id="prUnit">${unitOptions(p?.unit || "")}</select></div>
+      </div>
+      ${p?.builtin ? `<p class="note">Article du catalogue de départ${p.base && p.base !== p.name ? ` (à l'origine « ${esc(p.base)} »)` : ""}.</p>` : ""}
+      <div class="row" style="justify-content:space-between">
+        ${isNew ? "<span></span>" : `<button type="button" class="btn danger" id="prDel">Supprimer</button>`}
+        <div class="row"><button type="button" class="btn ghost" id="prBack">Retour</button><button class="btn">${isNew ? "Ajouter" : "Enregistrer"}</button></div>
+      </div>
+    </form>`, sh => {
+    sh.querySelector("#prBack").addEventListener("click", () => productsSheet());
+    sh.querySelector("#prodForm").addEventListener("submit", e => {
+      e.preventDefault();
+      const name = sh.querySelector("#prName").value.trim();
+      if (!name) { toast("Indiquez le nom de l'article."); return; }
+      const clash = knownProducts().find(x => norm(x.name) === norm(name) && (!p || norm(p.name) !== norm(name)));
+      if (clash) { toast(`« ${clash.name} » existe déjà.`); return; }
+      const data = {name, rayon: sh.querySelector("#prRay").value, unit: sh.querySelector("#prUnit").value, qty: Math.max(0, Number(sh.querySelector("#prQty").value) || 1)};
+      if (isNew) guard(save("products", "p" + newId(), data));
+      else if (p.id) guard(save("products", p.id, {...data, ...(p.base ? {base: p.base} : {})}));
+      else guard(save("products", "p" + newId(), {...data, base: p.name})); // retouche d'un article du catalogue de départ
+      toast(isNew ? "Article ajouté" : "Article enregistré"); setTimeout(() => productsSheet(), 60);
+    });
+    armDelete(sh.querySelector("#prDel"), "Confirmer la suppression", () => {
+      if (p.builtin) guard(p.id ? save("products", p.id, {name: p.name, base: p.base || p.name, hidden: true}) : save("products", "p" + newId(), {name: p.name, base: p.name, hidden: true}));
+      else guard(remove("products", p.id));
+      toast(`« ${p.name} » supprimé de la liste des articles`); setTimeout(() => productsSheet(), 60);
+    });
+  });
+}
+
+/* ---------- courses : un article de la liste ---------- */
+function shopItemSheet(i){
+  openSheet(`<div class="eyebrow">Article de la liste</div>
+    <form id="siForm" class="stack" autocomplete="off">
+      <div class="field"><label for="siName">Article</label><input type="text" id="siName" value="${esc(i.name)}"></div>
+      <div class="row" style="flex-wrap:nowrap">
+        <div class="field" style="flex:1;min-width:0"><label for="siQty">Quantité</label><input type="number" id="siQty" min="0" step="any" value="${i.qty}"></div>
+        <div class="field" style="flex:1.3;min-width:0"><label for="siUnit">Unité</label><select id="siUnit">${unitOptions(i.unit)}</select></div>
+      </div>
+      <div class="field"><label for="siRay">Rayon</label><select id="siRay">${rayonOptions(RAYON[i.rayon] ? i.rayon : "autre")}</select></div>
+      <div class="field"><label for="siNote">Précision <span style="font-weight:400">(facultatif)</span></label><input type="text" id="siNote" value="${esc(i.note || "")}" placeholder="Ex. bio, marque, en promo"></div>
+      ${i.dishes?.length ? `<p class="note">Pour : ${esc(i.dishes.join(", "))}</p>` : ""}
+      <div class="row" style="justify-content:space-between">
+        <button type="button" class="btn danger" id="siDel">Retirer de la liste</button>
+        <div class="row"><button type="button" class="btn ghost" data-close>Annuler</button><button class="btn">Enregistrer</button></div>
+      </div>
+    </form>`, sh => {
+    sh.querySelector("#siForm").addEventListener("submit", e => {
+      e.preventDefault();
+      const name = sh.querySelector("#siName").value.trim(); if (!name) { toast("Indiquez l'article."); return; }
+      const rayon = sh.querySelector("#siRay").value;
+      guard(patch("shopitems", i.id, {name, qty: Math.max(0, Number(sh.querySelector("#siQty").value) || 0), unit: sh.querySelector("#siUnit").value, rayon, note: sh.querySelector("#siNote").value.trim()}));
+      // le rayon choisi est retenu pour cet article
+      const known = state.products.find(p => norm(p.name) === norm(name)), cat = CATALOG.find(p => norm(p.name) === norm(name));
+      if (known && known.rayon !== rayon) guard(rawPatch("products", known.id, {rayon}));
+      else if (!known && (!cat || cat.rayon !== rayon)) guard(rawSave("products", "p" + newId(), {name: cat ? cat.name : name, rayon, unit: cat ? cat.unit : sh.querySelector("#siUnit").value, qty: cat ? cat.qty : 1, ...(cat ? {base: cat.name} : {})}));
+      closeSheet(); toast("Article enregistré");
+    });
+    sh.querySelector("#siDel").addEventListener("click", () => { guard(remove("shopitems", i.id)); closeSheet(); toast("Retiré de la liste"); });
+  });
+}
+function shopListSheet(L){
+  openSheet(`<div class="eyebrow">Liste de courses</div>
+    <form id="slForm" class="stack" autocomplete="off">
+      <div class="field"><label for="slTitle">Nom de la liste</label><input type="text" id="slTitle" value="${esc(L.title || "")}"></div>
+      <button type="button" class="btn ghost wide" id="slDone">${L.archived ? "Rouvrir la liste" : "Courses terminées : archiver la liste"}</button>
+      <div class="row" style="justify-content:space-between">
+        <button type="button" class="btn danger" id="slDel">Supprimer la liste</button>
+        <div class="row"><button type="button" class="btn ghost" data-close>Annuler</button><button class="btn">Enregistrer</button></div>
+      </div>
+    </form>`, sh => {
+    sh.querySelector("#slForm").addEventListener("submit", e => { e.preventDefault(); guard(patch("shoplists", L.id, {title: sh.querySelector("#slTitle").value.trim() || L.title})); closeSheet(); });
+    sh.querySelector("#slDone").addEventListener("click", () => { guard(patch("shoplists", L.id, {archived: !L.archived})); closeSheet();
+      if (!L.archived) { const next = activeLists().find(x => x.id !== L.id); state.shopCur = next?.id || null; store.set("cc-shoplist", state.shopCur || ""); toast("Liste archivée"); } else toast("Liste rouverte"); });
+    armDelete(sh.querySelector("#slDel"), "Confirmer : supprimer la liste et ses articles", () => {
+      guard(shopBulk(`suppression de la liste « ${L.title} »`, [...itemsOf(L.id).map(i => ({col: "shopitems", id: i.id, next: null})), {col: "shoplists", id: L.id, next: null}]));
+      state.shopCur = null; store.set("cc-shoplist", ""); closeSheet(); toast("Liste supprimée");
+    });
+  });
+}
+function shopOrderSheet(){
+  let order = shopOrder();
+  openSheet(`<div class="eyebrow">Ordre des rayons</div><p class="note">Rangez les rayons dans l'ordre où vous les parcourez dans votre magasin : la liste suivra cet ordre. Réglage commun aux deux profils.</p>
+    <div id="rayRows"></div><div class="row" style="justify-content:space-between"><button type="button" class="btn ghost" id="rayReset">Ordre par défaut</button><button type="button" class="btn" data-close>Fermer</button></div>`, sh => {
+    const draw = () => { sh.querySelector("#rayRows").innerHTML = order.map((k, i) => `<div class="layrow" style="grid-template-columns:1fr auto auto"><span class="t">${RAYON[k]}</span>
+      <button type="button" class="mv" data-rmv="${i}" data-dir="-1" ${i === 0 ? "disabled" : ""} aria-label="Monter ${RAYON[k]}">↑</button><button type="button" class="mv" data-rmv="${i}" data-dir="1" ${i === order.length - 1 ? "disabled" : ""} aria-label="Descendre ${RAYON[k]}">↓</button></div>`).join(""); };
+    const saveOrder = () => { const next = {...(state.settings.shop || {}), order}; state.settings.shop = next; guard(rawSave("settings", "shop", next)); renderShop(); };
+    draw();
+    sh.querySelector("#rayRows").addEventListener("click", e => { const b = e.target.closest("[data-rmv]"); if (!b) return; const i = Number(b.dataset.rmv), j = i + Number(b.dataset.dir);
+      [order[i], order[j]] = [order[j], order[i]]; draw(); saveOrder(); });
+    sh.querySelector("#rayReset").addEventListener("click", () => { order = RAYONS.map(r => r[0]); draw(); saveOrder(); });
+  });
+}
+document.addEventListener("click", e => {
+  if (!e.target.closest("#tab-shop")) return;
+  const t = e.target;
+  const chk = t.closest("[data-shopchk]"); if (chk) { const i = state.shopitems.find(x => x.id === chk.dataset.shopchk); if (i) guard(rawPatch("shopitems", i.id, {checked: !i.checked})); return; }
+  const it = t.closest("[data-shopitem]"); if (it) { const i = state.shopitems.find(x => x.id === it.dataset.shopitem); i && shopItemSheet(i); return; }
+  if (t.closest("#shopNew")) { newList(); toast("Nouvelle liste créée"); return; }
+  if (t.closest("#shopAdd")) { shopPicker(); return; }
+  if (t.closest("#shopDishes")) { shopPick.tab = "dishes"; shopPicker(); return; }
+  if (t.closest("#shopOrder")) { shopOrderSheet(); return; }
+  if (t.closest("#shopProducts")) { productsSheet(); return; }
+  if (t.closest("#shopListEdit")) { const L = currentList(); L && shopListSheet(L); return; }
+  if (t.closest("#shopReopen")) { const L = currentList(); L && guard(patch("shoplists", L.id, {archived: false})); return; }
+  if (t.closest("#shopUncheck")) { const L = currentList(); if (!L) return; const its = itemsOf(L.id).filter(i => i.checked);
+    guard(shopBulk(`décocher ${its.length} article${its.length > 1 ? "s" : ""}`, its.map(i => ({col: "shopitems", id: i.id, next: {...prevOf("shopitems", i.id), checked: false}})))); return; }
+  if (t.closest("#shopClearCart")) { const L = currentList(); if (!L) return; const its = itemsOf(L.id).filter(i => i.checked);
+    guard(shopBulk(`retrait de ${its.length} article${its.length > 1 ? "s" : ""} du caddie`, its.map(i => ({col: "shopitems", id: i.id, next: null})))); toast(`${its.length} article${its.length > 1 ? "s" : ""} retiré${its.length > 1 ? "s" : ""}`); return; }
+});
+document.addEventListener("change", e => {
+  if (e.target.id === "shopListSel") setShopCur(e.target.value);
+  if (e.target.id === "shopHide") { store.set("cc-shop-hide", e.target.checked ? "1" : "0"); renderShop(); }
+});
+document.addEventListener("submit", e => {
+  if (e.target.id !== "shopQuick") return;
+  e.preventDefault();
+  const inp = $("#shopQuickName"), name = inp.value.trim(); if (!name) return;
+  const g = knownProducts().find(p => norm(p.name) === norm(name));
+  const L = currentList() || {id: newList()};
+  addToList(L.id, [{name: g ? g.name : name, qty: g ? g.qty : 1, unit: g ? g.unit : "", rayon: g ? g.rayon : "autre"}], `ajout de « ${g ? g.name : name} »`);
+  if (!g) guard(rawSave("products", "p" + newId(), {name, rayon: "autre", unit: "", qty: 1}));
+  inp.value = ""; inp.focus();
+  toast(g ? `« ${g.name} » ajouté (${RAYON[g.rayon]})` : `« ${name} » ajouté dans « Autre » : touchez-le pour choisir son rayon`);
+});
 
 /* ---------- feuilles ---------- */
 let sheetLocked = false;
@@ -1793,7 +2292,7 @@ if (!state.me) welcomeSheet();
   try { db = window.claude?.use ? await window.claude.use("db") : null; } catch { db = null; }
   if (!db) { const b = $("#banner"); b.hidden = false; b.textContent = "Base de données indisponible."; return; }
   const lost = () => { const b = $("#banner"); b.hidden = false; b.textContent = "Accès à la base refusé ou perdu. Vérifiez votre connexion, puis rouvrez l'appli."; };
-  for (const col of ["events","tasks","projects","categories","log"]) {
+  for (const col of ["events","tasks","projects","categories","log","shoplists","shopitems","products","dishes"]) {
     db.collection(col).onSnapshot(s => { state[col] = s.docs.map(d => ({...d.data(), id:d.id})); render(); }, lost);
   }
   // Ménage du journal : on oublie les changements de plus de 30 jours
