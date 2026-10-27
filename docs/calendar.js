@@ -1317,7 +1317,10 @@ function knownProducts(){
   return [...m.values()].sort((a, b) => a.name.localeCompare(b.name, "fr"));
 }
 const guessProduct = name => knownProducts().find(p => norm(p.name) === norm(name)) || knownProducts().find(p => norm(name).length > 2 && norm(p.name).startsWith(norm(name)));
-const rayonOptions = cur => shopOrder().map(k => `<option value="${k}" ${k === cur ? "selected" : ""}>${RAYON[k]}</option>`).join("");
+// Rayons masqués (ex. bébé, animaux) : absents des propositions et des menus ; « Autre » reste toujours
+const hiddenRayons = () => (state.settings.shop?.hiddenRay || []).filter(k => k !== "autre");
+const shownRayons = () => shopOrder().filter(k => !hiddenRayons().includes(k));
+const rayonOptions = cur => shopOrder().filter(k => k === cur || !hiddenRayons().includes(k)).map(k => `<option value="${k}" ${k === cur ? "selected" : ""}>${RAYON[k]}</option>`).join("");
 const unitOptions = cur => UNITS.map(u => `<option value="${u}" ${u === (cur || "") ? "selected" : ""}>${u || "nombre"}</option>`).join("");
 const activeLists = () => state.shoplists.filter(l => !l.archived).sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || ""));
 function currentList(){
@@ -1346,6 +1349,7 @@ function renderShop(){
         ${lists.map(l => `<option value="${esc(l.id)}" ${l.id === L.id ? "selected" : ""}>${esc(l.title || "Liste")}</option>`).join("")}
         ${old.length ? `<optgroup label="Listes terminées">${old.map(l => `<option value="${esc(l.id)}" ${l.id === L.id ? "selected" : ""}>${esc(l.title || "Liste")}</option>`).join("")}</optgroup>` : ""}
       </select>
+      <button class="btn ghost add" id="shopRename" aria-label="Renommer la liste" title="Renommer la liste">✏️</button>
       <button class="btn ghost add" id="shopNew" aria-label="Nouvelle liste">+ Liste</button>
     </div>
     ${L.archived ? `<p class="note">Liste terminée. <button class="linklike" id="shopReopen">La rouvrir</button></p>` : ""}
@@ -1372,9 +1376,23 @@ function renderShop(){
       ${inCart ? `<button class="btn ghost" id="shopUncheck">Tout décocher</button><button class="btn ghost" id="shopClearCart">Retirer ce qui est dans le caddie</button>` : ""}
       <button class="btn ghost" id="shopDishes">Mes plats (${state.dishes.length})</button>
       <button class="btn ghost" id="shopProducts">Mes articles (${knownProducts().length})</button>
-      <button class="btn ghost" id="shopOrder">Ordre des rayons</button>
+      <button class="btn ghost" id="shopOrder">Rayons${hiddenRayons().length ? ` (${hiddenRayons().length} masqué${hiddenRayons().length > 1 ? "s" : ""})` : ""}</button>
       <button class="btn ghost" id="shopListEdit">Renommer / terminer la liste</button>
     </div>`;
+}
+// Nouvelle liste : on lui donne un nom (proposé par défaut : « Courses du … »)
+function newListSheet(){
+  const def = "Courses du " + new Date().toLocaleDateString("fr-FR", {weekday: "long", day: "numeric", month: "long"});
+  openSheet(`<div class="eyebrow">Nouvelle liste de courses</div>
+    <form id="nlForm" class="stack" autocomplete="off">
+      <div class="field"><label for="nlTitle">Nom de la liste</label><input type="text" id="nlTitle" value="${esc(def)}" maxlength="60"></div>
+      <div class="pick-grid">${["Courses de la semaine", "Supermarché", "Marché", "Drive", "Pharmacie", "Bricolage"].map(x => `<button type="button" class="pick-prod" data-nlname="${esc(x)}">${esc(x)}</button>`).join("")}</div>
+      <div class="row" style="justify-content:flex-end"><button type="button" class="btn ghost" data-close>Annuler</button><button class="btn">Créer la liste</button></div>
+    </form>`, sh => {
+    const inp = sh.querySelector("#nlTitle"); inp.focus(); inp.select();
+    sh.querySelector(".pick-grid").addEventListener("click", e => { const b = e.target.closest("[data-nlname]"); if (b) { inp.value = b.dataset.nlname; inp.focus(); } });
+    sh.querySelector("#nlForm").addEventListener("submit", e => { e.preventDefault(); newList(inp.value.trim() || def); closeSheet(); toast("Liste « " + (inp.value.trim() || def) + " » créée"); });
+  });
 }
 function setShopCur(id){ state.shopCur = id; store.set("cc-shoplist", id); renderShop(); }
 
@@ -1412,36 +1430,53 @@ function addToList(listId, entries, label){
 }
 
 /* ---------- courses : choix des articles et des plats ---------- */
-const shopPick = {tab: "items", q: "", sel: new Map(), dishes: new Map()};
+const shopPick = {tab: "items", q: "", sel: new Map(), dishes: new Map(), cart: false};
 function pickerCount(){
   let n = shopPick.sel.size;
   for (const d of shopPick.dishes.values()) n += d.ings.filter(x => x.on).length;
   return n;
 }
 function shopPicker(){
-  openSheet(`<div class="eyebrow">Ajouter à la liste</div>
-    <div class="seg" role="group" aria-label="Ajouter"><button data-ptab="items" aria-pressed="${shopPick.tab === "items"}">Articles</button><button data-ptab="dishes" aria-pressed="${shopPick.tab === "dishes"}">Plats</button></div>
+  openSheet(`<div class="row" style="justify-content:space-between;flex-wrap:nowrap"><div class="eyebrow" id="pickTitle">Ajouter à la liste</div><button type="button" class="linkbtn" data-close>Fermer</button></div>
+    <div class="seg" id="pickTabs" role="group" aria-label="Ajouter"><button data-ptab="items" aria-pressed="${shopPick.tab === "items"}">Articles</button><button data-ptab="dishes" aria-pressed="${shopPick.tab === "dishes"}">Plats</button></div>
     <div id="pickBody" class="stack" style="gap:10px"></div>
-    <div class="pick-foot"><button type="button" class="btn ghost" data-close>Fermer</button><button type="button" class="btn" id="pickAdd"></button></div>`, sh => {
+    <div class="pick-foot"><button type="button" class="btn ghost" id="pickCart"></button><button type="button" class="btn" id="pickAdd"></button></div>`, sh => {
     const body = sh.querySelector("#pickBody");
-    const foot = () => { const n = pickerCount(), b = sh.querySelector("#pickAdd"); b.textContent = n ? `Ajouter à la liste (${n})` : "Ajouter à la liste"; b.disabled = !n; };
+    const foot = () => {
+      const n = pickerCount(), b = sh.querySelector("#pickAdd"), c = sh.querySelector("#pickCart");
+      b.textContent = n ? `Ajouter (${n})` : "Ajouter"; b.disabled = !n; b.setAttribute("aria-label", `Ajouter à la liste${n ? ` (${n} article${n > 1 ? "s" : ""})` : ""}`);
+      c.textContent = shopPick.cart ? "← Continuer" : `Aperçu du panier${n ? ` (${n})` : ""}`; c.disabled = !n && !shopPick.cart;
+    };
     const draw = () => {
       sh.querySelectorAll("[data-ptab]").forEach(b => b.setAttribute("aria-pressed", b.dataset.ptab === shopPick.tab));
-      if (shopPick.tab === "items") drawItems(); else drawDishes();
+      sh.querySelector("#pickTabs").hidden = shopPick.cart;
+      sh.querySelector("#pickTitle").textContent = shopPick.cart ? "Aperçu du panier" : "Ajouter à la liste";
+      if (shopPick.cart) drawCart(); else if (shopPick.tab === "items") drawItems(); else drawDishes();
       foot();
+      sh.scrollTop = 0;
+    };
+    // Aperçu du panier : tout ce qui est choisi (articles et ingrédients des plats), quantités modifiables
+    const drawCart = () => {
+      const sel = [...shopPick.sel.values()], order = shopOrder(), ray = r => RAYON[r] ? r : "autre";
+      const dishes = [...shopPick.dishes].map(([id, st]) => [state.dishes.find(x => x.id === id), st]).filter(([d]) => d);
+      body.innerHTML = (!sel.length && !dishes.length) ? `<div class="empty">Le panier est vide.</div>` : `
+        ${sel.length ? `<div class="group-title">Articles (${sel.length})</div>${order.map(k => sel.filter(e => ray(e.rayon) === k).map(rowSel).join("")).join("")}` : ""}
+        ${dishes.map(([d, st]) => `<div class="group-title">${esc(d.name)} · pour ${st.parts}</div>
+          ${st.ings.map((x, k) => `<div class="pick-row ing ${x.on ? "" : "off"}" data-d="${esc(d.id)}" data-k="${k}"><input type="checkbox" class="ion" ${x.on ? "checked" : ""} aria-label="Prendre ${esc(x.name)}"><span class="t"><b>${esc(x.name)}</b><span class="m">${esc(RAYON[x.rayon] || "Autre")}</span></span>
+            <input type="number" class="qin" min="0" step="any" value="${x.qty}" aria-label="Quantité de ${esc(x.name)}"><select class="uin" aria-label="Unité">${unitOptions(x.unit)}</select></div>`).join("")}
+          <button type="button" class="linkbtn" data-undish="${esc(d.id)}">Retirer ce plat du panier</button>`).join("")}`;
     };
     const drawItems = () => {
       const q = norm(shopPick.q), all = knownProducts();
       const found = q ? all.filter(p => norm(p.name).includes(q)) : all;
       const exact = q && all.some(p => norm(p.name) === q);
-      const order = shopOrder();
-      const selected = [...shopPick.sel.values()];
+      const order = shownRayons();
       body.innerHTML = `<input type="search" id="pickQ" placeholder="Chercher ou créer un article" value="${esc(shopPick.q)}" aria-label="Chercher un article" autocomplete="off">
-        ${selected.length ? `<div class="group-title">Choisis (${selected.length})</div>${selected.map(rowSel).join("")}` : ""}
+        <p class="note">Touchez un article pour le mettre dans le panier (un second toucher l'enlève). Quantités : « Aperçu du panier ».</p>
         ${q && !exact ? `<div class="pick-new"><b>Nouvel article : « ${esc(shopPick.q.trim())} »</b>
           <div class="row" style="flex-wrap:nowrap"><select id="pickNewRay" aria-label="Rayon" style="flex:1;min-width:0">${rayonOptions("autre")}</select><button type="button" class="btn add" id="pickNewAdd">Ajouter</button></div>
           <span class="note">Il sera retenu pour les prochaines listes.</span></div>` : ""}
-        ${order.map(k => { const g = found.filter(p => p.rayon === k && !shopPick.sel.has(shopKey(p.name, p.unit))); return g.length ? `<div class="group-title">${RAYON[k]}</div><div class="pick-grid">${g.map(p => `<button type="button" class="pick-prod" data-prod="${esc(p.name)}">${esc(p.name)}</button>`).join("")}</div>` : ""; }).join("")}
+        ${order.map(k => { const g = found.filter(p => p.rayon === k); return g.length ? `<div class="group-title">${RAYON[k]}</div><div class="pick-grid">${g.map(p => { const e = shopPick.sel.get(shopKey(p.name, p.unit)); return `<button type="button" class="pick-prod" data-prod="${esc(p.name)}" aria-pressed="${!!e}">${e ? "✓ " : ""}${esc(p.name)}${e ? ` <span class="pq">${esc(qtyText(e.qty, e.unit))}</span>` : ""}</button>`; }).join("")}</div>` : ""; }).join("")}
         ${!found.length && !q ? `<div class="empty">Aucun article.</div>` : ""}
         <button type="button" class="btn ghost wide" id="pickManage">Modifier la liste des articles</button>`;
       const qi = body.querySelector("#pickQ");
@@ -1479,7 +1514,9 @@ function shopPicker(){
       return {...x, on: true, qty}; });
     body.addEventListener("click", e => {
       const t = e.target;
-      const p = t.closest("[data-prod]"); if (p) { const prod = knownProducts().find(x => x.name === p.dataset.prod); if (prod) shopPick.sel.set(shopKey(prod.name, prod.unit), {...prod}); drawItems(); foot(); return; }
+      const p = t.closest("[data-prod]"); if (p) { const prod = knownProducts().find(x => x.name === p.dataset.prod); if (prod) { const k = shopKey(prod.name, prod.unit); if (shopPick.sel.has(k)) shopPick.sel.delete(k); else shopPick.sel.set(k, {...prod}); }
+        const y = sh.scrollTop; drawItems(); foot(); sh.scrollTop = y; return; }
+      const ud = t.closest("[data-undish]"); if (ud) { shopPick.dishes.delete(ud.dataset.undish); drawCart(); foot(); return; }
       const row = t.closest(".pick-row");
       const dp = t.closest("[data-dish]"); if (dp) { const d = state.dishes.find(x => x.id === dp.dataset.dish); if (!d) return;
         if (shopPick.dishes.has(d.id)) shopPick.dishes.delete(d.id); else shopPick.dishes.set(d.id, {parts: d.parts || 4, ings: scale(d, d.parts || 4)}); drawDishes(); foot(); return; }
@@ -1498,7 +1535,7 @@ function shopPicker(){
       if (t.closest("#pickManage")) { productsSheet(true); return; }
       if (row && row.dataset.selkey) {
         const e2 = shopPick.sel.get(row.dataset.selkey); if (!e2) return;
-        if (t.closest("[data-unsel]")) { shopPick.sel.delete(row.dataset.selkey); drawItems(); foot(); return; }
+        if (t.closest("[data-unsel]")) { shopPick.sel.delete(row.dataset.selkey); if (shopPick.cart) drawCart(); else drawItems(); foot(); return; }
         const qd = t.closest("[data-qd]"); if (qd) { const step = UNIT_FIXED.includes(e2.unit) ? (e2.unit === "g" || e2.unit === "ml" ? 100 : e2.unit === "cl" ? 10 : 0.5) : 1;
           e2.qty = Math.max(0, Math.round(((Number(e2.qty) || 0) + step * Number(qd.dataset.qd)) * 100) / 100); row.querySelector(".qin").value = e2.qty; }
       }
@@ -1512,6 +1549,7 @@ function shopPicker(){
       if (e.target.classList.contains("ion")) { target.on = e.target.checked; row.classList.toggle("off", !target.on); foot(); }
     });
     sh.querySelectorAll("[data-ptab]").forEach(b => b.addEventListener("click", () => { shopPick.tab = b.dataset.ptab; draw(); }));
+    sh.querySelector("#pickCart").addEventListener("click", () => { shopPick.cart = !shopPick.cart; draw(); });
     sh.querySelector("#pickAdd").addEventListener("click", () => {
       const entries = [...shopPick.sel.values()].filter(x => Number(x.qty) > 0).map(x => ({...x}));
       for (const [id, s] of shopPick.dishes) { const d = state.dishes.find(x => x.id === id); if (!d) continue;
@@ -1520,7 +1558,7 @@ function shopPicker(){
       const L = currentList() || {id: newList()};
       addToList(L.id, entries, `ajout de ${entries.length} article${entries.length > 1 ? "s" : ""} à la liste`);
       const nd = shopPick.dishes.size;
-      shopPick.sel.clear(); shopPick.dishes.clear(); shopPick.q = "";
+      shopPick.sel.clear(); shopPick.dishes.clear(); shopPick.q = ""; shopPick.cart = false;
       closeSheet(); toast(`${entries.length} article${entries.length > 1 ? "s" : ""} ajouté${entries.length > 1 ? "s" : ""}${nd ? ` (dont ${nd} plat${nd > 1 ? "s" : ""})` : ""}`);
     });
     draw();
@@ -1591,7 +1629,7 @@ function productsSheet(fromPicker){
     const list = sh.querySelector("#prodList");
     const draw = () => {
       const q = norm(productsQ), all = knownProducts().filter(p => !q || norm(p.name).includes(q));
-      list.innerHTML = shopOrder().map(k => { const g = all.filter(p => p.rayon === k); return g.length ? `<div class="group-title">${RAYON[k]} (${g.length})</div><div class="pick-grid">${g.map(p => `<button type="button" class="pick-prod" data-editprod="${esc(p.name)}" title="${esc(qtyText(p.qty, p.unit))}">${esc(p.name)}</button>`).join("")}</div>` : ""; }).join("")
+      list.innerHTML = shownRayons().map(k => { const g = all.filter(p => p.rayon === k); return g.length ? `<div class="group-title">${RAYON[k]} (${g.length})</div><div class="pick-grid">${g.map(p => `<button type="button" class="pick-prod" data-editprod="${esc(p.name)}" title="${esc(qtyText(p.qty, p.unit))}">${esc(p.name)}</button>`).join("")}</div>` : ""; }).join("")
         || `<div class="empty">Aucun article ne correspond.</div>`;
     };
     draw();
@@ -1695,16 +1733,20 @@ function shopListSheet(L){
   });
 }
 function shopOrderSheet(){
-  let order = shopOrder();
-  openSheet(`<div class="eyebrow">Ordre des rayons</div><p class="note">Rangez les rayons dans l'ordre où vous les parcourez dans votre magasin : la liste suivra cet ordre. Réglage commun aux deux profils.</p>
-    <div id="rayRows"></div><div class="row" style="justify-content:space-between"><button type="button" class="btn ghost" id="rayReset">Ordre par défaut</button><button type="button" class="btn" data-close>Fermer</button></div>`, sh => {
-    const draw = () => { sh.querySelector("#rayRows").innerHTML = order.map((k, i) => `<div class="layrow" style="grid-template-columns:1fr auto auto"><span class="t">${RAYON[k]}</span>
+  let order = shopOrder(), hidden = hiddenRayons();
+  openSheet(`<div class="eyebrow">Rayons : ordre et affichage</div><p class="note">Rangez les rayons dans l'ordre où vous les parcourez dans votre magasin : la liste suivra cet ordre. Décochez les rayons dont vous n'avez pas besoin (ex. Bébé, Animaux) : ils disparaissent des propositions. Réglage commun aux deux profils.</p>
+    <div id="rayRows"></div><div class="row" style="justify-content:space-between"><button type="button" class="btn ghost" id="rayReset">Par défaut</button><button type="button" class="btn" data-close>Fermer</button></div>`, sh => {
+    const draw = () => { sh.querySelector("#rayRows").innerHTML = order.map((k, i) => `<div class="layrow ${hidden.includes(k) ? "off" : ""}" style="grid-template-columns:auto 1fr auto auto">
+      <input type="checkbox" data-rshow="${k}" ${hidden.includes(k) ? "" : "checked"} ${k === "autre" ? "disabled" : ""} aria-label="Afficher le rayon ${RAYON[k]}" style="width:22px;height:22px;accent-color:var(--accent)">
+      <span class="t">${RAYON[k]}${hidden.includes(k) ? ' <span class="m">masqué</span>' : ""}</span>
       <button type="button" class="mv" data-rmv="${i}" data-dir="-1" ${i === 0 ? "disabled" : ""} aria-label="Monter ${RAYON[k]}">↑</button><button type="button" class="mv" data-rmv="${i}" data-dir="1" ${i === order.length - 1 ? "disabled" : ""} aria-label="Descendre ${RAYON[k]}">↓</button></div>`).join(""); };
-    const saveOrder = () => { const next = {...(state.settings.shop || {}), order}; state.settings.shop = next; guard(rawSave("settings", "shop", next)); renderShop(); };
+    const saveOrder = () => { saveShopSettings({order, hiddenRay: hidden}); renderShop(); };
     draw();
     sh.querySelector("#rayRows").addEventListener("click", e => { const b = e.target.closest("[data-rmv]"); if (!b) return; const i = Number(b.dataset.rmv), j = i + Number(b.dataset.dir);
       [order[i], order[j]] = [order[j], order[i]]; draw(); saveOrder(); });
-    sh.querySelector("#rayReset").addEventListener("click", () => { order = RAYONS.map(r => r[0]); draw(); saveOrder(); });
+    sh.querySelector("#rayRows").addEventListener("change", e => { const c = e.target.closest("[data-rshow]"); if (!c) return;
+      hidden = c.checked ? hidden.filter(k => k !== c.dataset.rshow) : [...new Set([...hidden, c.dataset.rshow])]; draw(); saveOrder(); });
+    sh.querySelector("#rayReset").addEventListener("click", () => { order = RAYONS.map(r => r[0]); hidden = []; draw(); saveOrder(); });
   });
 }
 document.addEventListener("click", e => {
@@ -1712,12 +1754,12 @@ document.addEventListener("click", e => {
   const t = e.target;
   const chk = t.closest("[data-shopchk]"); if (chk) { const i = state.shopitems.find(x => x.id === chk.dataset.shopchk); if (i) guard(rawPatch("shopitems", i.id, {checked: !i.checked})); return; }
   const it = t.closest("[data-shopitem]"); if (it) { const i = state.shopitems.find(x => x.id === it.dataset.shopitem); i && shopItemSheet(i); return; }
-  if (t.closest("#shopNew")) { newList(); toast("Nouvelle liste créée"); return; }
-  if (t.closest("#shopAdd")) { shopPicker(); return; }
-  if (t.closest("#shopDishes")) { shopPick.tab = "dishes"; shopPicker(); return; }
+  if (t.closest("#shopNew")) { newListSheet(); return; }
+  if (t.closest("#shopAdd")) { shopPick.cart = false; shopPicker(); return; }
+  if (t.closest("#shopDishes")) { shopPick.tab = "dishes"; shopPick.cart = false; shopPicker(); return; }
   if (t.closest("#shopOrder")) { shopOrderSheet(); return; }
   if (t.closest("#shopProducts")) { productsSheet(); return; }
-  if (t.closest("#shopListEdit")) { const L = currentList(); L && shopListSheet(L); return; }
+  if (t.closest("#shopListEdit") || t.closest("#shopRename")) { const L = currentList(); L && shopListSheet(L); return; }
   if (t.closest("#shopReopen")) { const L = currentList(); L && guard(patch("shoplists", L.id, {archived: false})); return; }
   if (t.closest("#shopUncheck")) { const L = currentList(); if (!L) return; const its = itemsOf(L.id).filter(i => i.checked);
     guard(shopBulk(`décocher ${its.length} article${its.length > 1 ? "s" : ""}`, its.map(i => ({col: "shopitems", id: i.id, next: {...prevOf("shopitems", i.id), checked: false}})))); return; }
